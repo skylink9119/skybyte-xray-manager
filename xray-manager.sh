@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # SKYBYTE Xray Manager standalone; generated from src/manager.sh and src/core.py.
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
 VERSION=0.1.0
@@ -32,6 +34,8 @@ confirm(){ local answer; answer=$(ask "$1 [YES]: " "$2 [YES]: ") || return 1; co
 separator(){ printf '%s\n' '------------------------------------------------------------'; }
 
 helper(){ python3 - "$@" <<'SKYBYTE_PYTHON'
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
 """SKYBYTE Xray Manager: private configuration, exports and transactions.
 
 Only generated runtime state contains credentials. No imported content is executed.
@@ -569,8 +573,11 @@ def download_binary(destination, asset, tag=CORE_VERSION):
     allowed = {"Xray-linux-64.zip", "Xray-linux-arm64-v8a.zip", "Xray-macos-64.zip", "Xray-macos-arm64-v8a.zip"}
     if asset not in allowed:
         raise ValueError("Unsupported architecture")
+    headers = {"User-Agent": "SKYBYTE-Xray-Manager"}
+    if os.environ.get("SKYBYTE_GITHUB_TOKEN"):
+        headers["Authorization"] = "Bearer " + os.environ["SKYBYTE_GITHUB_TOKEN"]
     request = urllib.request.Request("https://api.github.com/repos/XTLS/Xray-core/releases/tags/" + tag,
-                                     headers={"User-Agent": "SKYBYTE-Xray-Manager"})
+                                     headers=headers)
     with urllib.request.urlopen(request, timeout=30) as response:
         metadata = json.load(response)
     if metadata.get("draft") or metadata.get("prerelease") or metadata.get("tag_name") != tag:
@@ -1036,6 +1043,8 @@ PY
  exit 0
 }
 guide(){
+ say 'Copyright © 2026 SKYBYTE (skylink9119)。GPLv3，无担保；可按许可证修改和再分发。' 'Copyright © 2026 SKYBYTE (skylink9119). GPLv3, no warranty; modification and redistribution permitted under the license.'
+ say '完整许可证：https://github.com/skylink9119/skybyte-xray-manager/blob/development/LICENSE' 'Full license: https://github.com/skylink9119/skybyte-xray-manager/blob/development/LICENSE'
  say 'Reality/Vision 和 XHTTP-Reality 使用不同 TCP 端口；XHTTP-TLS 需要已有可信域名证书。' 'Vision and XHTTP-Reality use separate TCP ports; XHTTP-TLS needs an existing trusted domain certificate.'
  say 'CDN 模式需设置 DNS、可代理 HTTPS 端口及严格的回源证书验证；不替你配置 CDN。' 'For CDN, configure DNS, a supported HTTPS port and strict origin verification; CDN setup is manual.'
  say '客户端必须支持对应传输。节点文件是本地导出，不是在线订阅 URL。' 'Clients must support the transport. Exports are local files, not online subscription URLs.'

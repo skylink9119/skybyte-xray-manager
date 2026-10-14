@@ -1,3 +1,5 @@
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
 import argparse
 import base64
 import copy
@@ -269,8 +271,11 @@ class FileTests(TemporaryFixture):
         metadata={'tag_name':core.CORE_VERSION,'draft':False,'prerelease':False,'assets':[{'name':asset,
             'browser_download_url':f'https://github.com/XTLS/Xray-core/releases/download/{core.CORE_VERSION}/{asset}',
             'digest':'sha256:'+hashlib.sha256(data).hexdigest()}]}
-        with mock.patch.object(core.urllib.request,'urlopen',side_effect=[io.BytesIO(json.dumps(metadata).encode()),io.BytesIO(data)]):
+        with mock.patch.dict(os.environ,SKYBYTE_GITHUB_TOKEN='test-metadata-token'), mock.patch.object(core.urllib.request,'urlopen',side_effect=[io.BytesIO(json.dumps(metadata).encode()),io.BytesIO(data)]) as fetch:
             core.download_binary(self.base/'xray',asset)
+        metadata_request=fetch.call_args_list[0].args[0]
+        self.assertEqual(metadata_request.get_header('Authorization'),'Bearer test-metadata-token')
+        self.assertIsInstance(fetch.call_args_list[1].args[0],str)
         self.assertEqual((self.base/'xray').read_bytes(),b'test engine')
         self.assertEqual((self.base/'xray').stat().st_mode & 0o777,0o700)
 
@@ -299,7 +304,7 @@ class EngineTests(TemporaryFixture):
         cls.cert_base=Path(cls.cert_temp.name)
         cls.cert=cls.cert_base/'cert.pem';cls.private_key=cls.cert_base/'key.pem'
         config=cls.cert_base/'openssl.cnf'
-        config.write_text('[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=extensions\n[dn]\nCN=localhost\n[extensions]\nsubjectAltName=DNS:localhost\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\nextendedKeyUsage=serverAuth\n')
+        config.write_text('[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=extensions\n[dn]\nCN=localhost\n[extensions]\nsubjectAltName=DNS:localhost\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n')
         subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','3',
             '-config',str(config),'-keyout',str(cls.private_key),'-out',str(cls.cert)],
             check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

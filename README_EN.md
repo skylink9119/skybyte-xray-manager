@@ -26,7 +26,7 @@ bash install.sh
 
 Alternatively run `bash xray-manager.sh`. No sudo is needed. Missing bootstrap dependencies prompt for confirmation. APT index errors stop installation instead of continuing with stale indexes. The official stable core download is checked against its GitHub Release SHA256 digest.
 
-This is a local standalone project, not yet published to GitHub. There is no invented online installer URL. Keep install.sh and xray-manager.sh together when using the complete package.
+Independent repository: [skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager). The first version lives on `development` and is reviewed through a PR before entering `main`. Keep install.sh and xray-manager.sh together when using the complete package.
 
 Menus and prompts are bold green; metadata and warnings yellow; links and errors red. YES is case-insensitive. Non-terminal output and NO_COLOR disable color.
 
@@ -88,6 +88,10 @@ XRAY_BIN=/absolute/path/to/verified/xray python3 -m unittest discover -s tests -
 
 Local validation uses the digest-verified official Darwin/arm64 core, including real authenticated Vision, XHTTP-Reality, verified XHTTP-TLS and packet-up origin connections. Service policy tests use a disposable systemctl controller, not a real systemd boot. Local packet-up does not prove a public CDN works.
 
-Ubuntu 24.04, Debian 12 and Debian 13 GitHub Actions definitions are included. They have not run for this unpushed local repository. Real VPS boot, provider firewall, public CDN and GUI client imports still require validation.
+Ubuntu 24.04, Debian 12 and Debian 13 GitHub Actions definitions are included. Local results and Linux CI results are reported separately. Real VPS boot, provider firewall, public CDN and GUI client imports still require validation.
 
 SKYBYTE Manager · [Subscribe to the SKYBYTE YouTube channel](https://www.youtube.com/@SKYBYTE9119).
+
+## License
+
+Copyright © 2026 SKYBYTE (skylink9119). Manager code uses [GPLv3](LICENSE). Distributed modifications retain notices and provide corresponding source under the GPL. Independent third-party components such as Xray-core keep their own licenses.

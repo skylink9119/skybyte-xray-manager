@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
 # Install the local, complete SKYBYTE Xray Manager distribution.
 set -Eeuo pipefail
 umask 077

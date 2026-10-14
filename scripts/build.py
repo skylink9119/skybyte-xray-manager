@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
 """Build the reviewable, self-contained Bash distribution."""
 import argparse
 from pathlib import Path

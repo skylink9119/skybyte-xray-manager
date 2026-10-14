@@ -1,3 +1,5 @@
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
 """SKYBYTE Xray Manager: private configuration, exports and transactions.
 
 Only generated runtime state contains credentials. No imported content is executed.
@@ -535,8 +537,11 @@ def download_binary(destination, asset, tag=CORE_VERSION):
     allowed = {"Xray-linux-64.zip", "Xray-linux-arm64-v8a.zip", "Xray-macos-64.zip", "Xray-macos-arm64-v8a.zip"}
     if asset not in allowed:
         raise ValueError("Unsupported architecture")
+    headers = {"User-Agent": "SKYBYTE-Xray-Manager"}
+    if os.environ.get("SKYBYTE_GITHUB_TOKEN"):
+        headers["Authorization"] = "Bearer " + os.environ["SKYBYTE_GITHUB_TOKEN"]
     request = urllib.request.Request("https://api.github.com/repos/XTLS/Xray-core/releases/tags/" + tag,
-                                     headers={"User-Agent": "SKYBYTE-Xray-Manager"})
+                                     headers=headers)
     with urllib.request.urlopen(request, timeout=30) as response:
         metadata = json.load(response)
     if metadata.get("draft") or metadata.get("prerelease") or metadata.get("tag_name") != tag:

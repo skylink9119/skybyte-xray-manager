@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
 """Package source/installer only; never include runtime credentials or binaries."""
 import hashlib
 from pathlib import Path
@@ -7,7 +9,7 @@ import tarfile
 
 root=Path(__file__).resolve().parents[1]
 subprocess.run(['python3',str(root/'scripts/build.py'),'--check'],check=True)
-files=['install.sh','xray-manager.sh','README.md','README_EN.md','CHANGELOG.md','.gitignore',
+files=['install.sh','xray-manager.sh','README.md','README_EN.md','CHANGELOG.md','LICENSE','.gitignore',
        'src/manager.sh','src/core.py','scripts/build.py','scripts/package.py',
        'tests/test_manager.py','tests/test_services.py','.github/workflows/test.yml']
 folder=root/'dist';folder.mkdir(exist_ok=True)

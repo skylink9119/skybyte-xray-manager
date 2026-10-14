@@ -26,7 +26,7 @@ bash install.sh
 
 也可在完整目录直接运行 `bash xray-manager.sh`。无需 sudo。缺少 Python 或 flock 时，安装入口会询问是否安装基础依赖。APT 索引更新失败会停止，不继续使用旧索引安装。核心仅从官方稳定 Release 下载，并按 GitHub Release 的 SHA256 摘要验证。
 
-当前是独立本地项目，尚未发布到 GitHub，因此不提供虚构的在线一键安装 URL。完整包包含 `install.sh` 和自包含的 `xray-manager.sh`；不能只复制安装入口而漏掉主脚本。
+独立仓库：[skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager)。首版代码在 `development` 分支，通过 PR 审核后再进入 `main`。完整包包含 `install.sh` 和自包含的 `xray-manager.sh`；不能只复制安装入口而漏掉主脚本。
 
 首次启动选择语言。菜单和提问绿色加粗，节点信息黄色，链接和错误红色，警告黄色；非终端或 `NO_COLOR=1` 可关闭颜色。YES 确认不区分大小写。
 
@@ -94,6 +94,10 @@ XRAY_BIN=/absolute/path/to/verified/xray python3 -m unittest discover -s tests -
 
 本地使用已验证摘要的官方 Darwin/arm64 核心进行了配置检查与真实代理连接测试，涵盖 Vision、XHTTP-Reality、验证证书的 XHTTP-TLS 及 packet-up 源站模式。服务事务测试使用隔离的 systemctl 模拟器，**不能替代真实 systemd 开机测试**。packet-up 本地源站连接也不能代表已验证公网 CDN。
 
-已准备 Ubuntu 24.04、Debian 12、Debian 13 的 GitHub Actions 配置；本地仓库未推送，不能把尚未运行的 Linux CI 当作通过。实际 VPS、云防火墙、CDN 和客户端 GUI 导入仍需在测试服务器验证。
+GitHub Actions 覆盖 Ubuntu 24.04、Debian 12、Debian 13；本地测试通过与 Linux CI 结果分别记录，不能用前者代替后者。实际 VPS、云防火墙、CDN 和客户端 GUI 导入仍需在测试服务器验证。
 
 品牌：SKYBYTE Manager · [订阅 SKYBYTE YouTube 频道](https://www.youtube.com/@SKYBYTE9119)。
+
+## 许可证
+
+Copyright © 2026 SKYBYTE (skylink9119)。管理脚本以 [GPLv3](LICENSE) 发布；分发修改版时保留版权与许可证声明，并按 GPL 提供源码。Xray-core 等独立第三方组件遵循各自许可证。

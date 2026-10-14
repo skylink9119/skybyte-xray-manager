@@ -1,5 +1,11 @@
 name: Bash and Xray protocol checks
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -26,7 +32,10 @@ jobs:
           shellcheck install.sh src/manager.sh xray-manager.sh
           bash xray-manager.sh --self-check
       - name: Verified official engine and real proxy tests
+        env:
+          SKYBYTE_GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p work
           python3 src/core.py download --file "$PWD/work/xray" --asset Xray-linux-64.zip
+          unset SKYBYTE_GITHUB_TOKEN
           XRAY_BIN="$PWD/work/xray" python3 -m unittest discover -s tests -v

@@ -1,3 +1,5 @@
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
 """Real configuration transactions with a disposable systemctl controller.
 
 These check rollback policy. They do not claim a real systemd boot test.
