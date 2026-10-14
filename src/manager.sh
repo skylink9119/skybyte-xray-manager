@@ -148,7 +148,7 @@ apply_stage() (
  systemctl is-enabled --quiet skybyte-xray.service && was_enabled=yes
  [[ $was_active != yes ]] || flags+=(--active)
  [[ $was_enabled != yes ]] || flags+=(--enabled)
- # shellcheck disable=SC2329 # Invoked by the EXIT trap.
+ # shellcheck disable=SC2317,SC2329 # EXIT trap invocation is indirect; rollback tests exercise this function.
  cleanup_stage(){
   local status=$?
   if (( applied && ! accepted )); then
@@ -307,7 +307,7 @@ update_core() (
  confirm '校验并更新核心？运行中的节点会短暂重启。' 'Verify and update core? Active nodes will briefly restart.' || return 1
  [[ ! -e $SKYBYTE_XRAY_LIB/.old-core && ! -e $SKYBYTE_XRAY_LIB/.update-active ]] || return 1
  candidate=$(mktemp "$SKYBYTE_XRAY_LIB/.update.XXXXXX") || return 1
- # shellcheck disable=SC2329 # Invoked by the EXIT trap.
+ # shellcheck disable=SC2317,SC2329 # EXIT trap invocation is indirect; rollback tests exercise this function.
  update_cleanup(){
   local status=$?
   if (( ! accepted && replaced )); then
