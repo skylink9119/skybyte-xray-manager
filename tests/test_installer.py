@@ -1,0 +1,131 @@
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
+"""Installer integrity, file ownership and executable shortcut checks."""
+import hashlib
+import os
+import subprocess
+import sys
+import tarfile
+from test_manager import TemporaryFixture, PROJECT
+
+
+class InstallerTests(TemporaryFixture):
+    def setUp(self):
+        super().setUp()
+        self.lib=self.base/'library'
+        self.shortcut=self.base/'bin with spaces'/'xr'
+        self.env=os.environ.copy()
+
+    def shell(self,command,*args):
+        return subprocess.run(['bash','-c','source "$1"; '+command,'test',str(PROJECT/'install.sh'),*map(str,args)],
+                              env=self.env,capture_output=True,text=True)
+
+    def install(self):
+        return self.shell('install_payload "$2" "$3" "$4"',PROJECT/'xray-manager.sh',self.lib,self.shortcut)
+
+    def remote(self,manifest=None):
+        self.assets=self.base/'assets';self.assets.mkdir()
+        payload=(PROJECT/'xray-manager.sh').read_bytes()
+        (self.assets/'xray-manager.sh').write_bytes(payload)
+        digest=hashlib.sha256(payload).hexdigest()
+        (self.assets/'SHA256SUMS').write_text(manifest if manifest is not None else digest+'  xray-manager.sh\n')
+        tools=self.base/'tools';tools.mkdir()
+        curl=tools/'curl'
+        curl.write_text('''#!/usr/bin/env python3
+import os,shutil,sys
+from pathlib import Path
+args=sys.argv[1:]
+url=next(x for x in args if x.startswith('https://'))
+prefix='https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.0/'
+if not url.startswith(prefix): sys.exit(23)
+asset=url[len(prefix):]
+if asset not in ['SHA256SUMS','xray-manager.sh']: sys.exit(23)
+source=Path(os.environ['FAKE_RELEASE_ASSETS'])/asset
+if not source.is_file(): sys.exit(22)
+shutil.copyfile(source,args[args.index('-o')+1])
+''')
+        curl.chmod(0o755)
+        self.env.update(PATH=str(tools)+os.pathsep+os.environ['PATH'],FAKE_RELEASE_ASSETS=str(self.assets))
+        destination=self.base/'download';destination.mkdir()
+        return destination
+
+    def test_verified_single_file_download(self):
+        destination=self.remote()
+        result=self.shell('download_manager "$2"',destination)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((destination/'xray-manager.sh').read_bytes(),(PROJECT/'xray-manager.sh').read_bytes())
+
+    def test_tampered_payload_rejected(self):
+        destination=self.remote()
+        (self.assets/'xray-manager.sh').write_bytes(b'not the release payload')
+        result=self.shell('download_manager "$2"',destination)
+        self.assertNotEqual(result.returncode,0)
+        self.assertFalse(self.lib.exists())
+
+    def test_duplicate_checksum_entry_rejected(self):
+        destination=self.remote()
+        manifest=self.assets/'SHA256SUMS'
+        manifest.write_text(manifest.read_text()*2)
+        self.assertNotEqual(self.shell('download_manager "$2"',destination).returncode,0)
+
+    def test_missing_checksum_entry_rejected(self):
+        destination=self.remote('0'*64+'  another-file.sh\n')
+        self.assertNotEqual(self.shell('download_manager "$2"',destination).returncode,0)
+
+    def test_failed_download_stops_before_installation(self):
+        destination=self.remote()
+        (self.assets/'SHA256SUMS').unlink()
+        self.assertNotEqual(self.shell('download_manager "$2"',destination).returncode,0)
+        self.assertFalse((destination/'xray-manager.sh').exists())
+        self.assertFalse(self.lib.exists())
+
+    def test_install_and_shortcut_forward_arguments(self):
+        result=self.install()
+        self.assertEqual(result.returncode,0,result.stderr)
+        result=subprocess.run([str(self.shortcut),'--version'],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'SKYBYTE Xray Manager 0.1.0')
+        self.assertEqual(self.lib.stat().st_mode & 0o777,0o700)
+        self.assertEqual((self.lib/'manager.sh').stat().st_mode & 0o777,0o700)
+        self.assertEqual((self.lib/'.owner').stat().st_mode & 0o777,0o600)
+
+    def test_reinstall_preserves_runtime_configuration(self):
+        self.assertEqual(self.install().returncode,0)
+        state=self.root/'state.json';self.root.mkdir();state.write_text('{"existing":"keep"}')
+        notes=self.lib/'notes.txt';notes.write_text('keep')
+        self.assertEqual(self.install().returncode,0)
+        self.assertEqual(state.read_text(),'{"existing":"keep"}')
+        self.assertEqual(notes.read_text(),'keep')
+
+    def test_foreign_library_preserved(self):
+        self.lib.mkdir();foreign=self.lib/'config.json';foreign.write_text('keep')
+        self.assertNotEqual(self.install().returncode,0)
+        self.assertEqual(foreign.read_text(),'keep')
+        self.assertFalse(self.shortcut.exists())
+
+    def test_foreign_shortcut_preserved_before_mutation(self):
+        self.shortcut.parent.mkdir();self.shortcut.write_text('another program')
+        self.assertNotEqual(self.install().returncode,0)
+        self.assertEqual(self.shortcut.read_text(),'another program')
+        self.assertFalse(self.lib.exists())
+
+    def test_symlink_shortcut_parent_refused(self):
+        real=self.base/'real-bin';real.mkdir()
+        self.shortcut.parent.symlink_to(real,target_is_directory=True)
+        self.assertNotEqual(self.install().returncode,0)
+        self.assertFalse((real/'xr').exists())
+
+    def test_package_contains_only_source_and_matching_checksums(self):
+        result=subprocess.run([sys.executable,str(PROJECT/'scripts/package.py')],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        folder=PROJECT/'dist'
+        for line in (folder/'SHA256SUMS').read_text().splitlines():
+            digest,name=line.split()
+            self.assertEqual(hashlib.sha256((folder/name).read_bytes()).hexdigest(),digest)
+        with tarfile.open(folder/'SKYBYTE-Xray-Manager-v0.1.0.tar.gz') as archive:
+            names={item.name for item in archive}
+        prefix='skybyte-xray-manager-v0.1.0/'
+        self.assertIn(prefix+'LICENSE',names)
+        self.assertIn(prefix+'tests/test_installer.py',names)
+        self.assertTrue(all(name.startswith(prefix) for name in names))
+        self.assertFalse(any('/work/' in name or name.endswith(('state.json','.pem','.key','.crt')) for name in names))

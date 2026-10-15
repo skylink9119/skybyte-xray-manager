@@ -1,0 +1,41 @@
+name: Bash and Xray protocol checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu:24.04, debian:12, debian:13]
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install tools
+        run: |
+          apt-get update
+          apt-get install -y bash python3 openssl ca-certificates shellcheck curl
+      - uses: actions/checkout@v4
+      - name: Syntax and static checks
+        run: |
+          python3 scripts/build.py --check
+          bash -n install.sh
+          bash -n src/manager.sh
+          bash -n xray-manager.sh
+          shellcheck install.sh src/manager.sh xray-manager.sh
+          bash xray-manager.sh --self-check
+      - name: Verified official engine and real proxy tests
+        env:
+          SKYBYTE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p work
+          python3 src/core.py download --file "$PWD/work/xray" --asset Xray-linux-64.zip
+          unset SKYBYTE_GITHUB_TOKEN
+          XRAY_BIN="$PWD/work/xray" python3 -m unittest discover -s tests -v
