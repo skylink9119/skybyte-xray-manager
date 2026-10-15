@@ -44,6 +44,7 @@ Only generated runtime state contains credentials. No imported content is execut
 import argparse
 import base64
 import copy
+import errno
 import hashlib
 import io
 import ipaddress
@@ -58,6 +59,7 @@ import sys
 import tarfile
 import tempfile
 import urllib.parse
+import urllib.error
 import urllib.request
 import uuid
 import zipfile
@@ -113,6 +115,8 @@ def domain(value):
 
 def address(value):
     value = value.strip()
+    if not value:
+        raise ValueError("Client address required: enter your VPS public IP or domain / 客户端连接地址必填：请输入本 VPS 的公网 IP 或域名")
     try:
         return str(ipaddress.ip_address(value))
     except ValueError:
@@ -350,22 +354,36 @@ def render_files(state, root):
 
 
 def check_port(host, number):
-    with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as listener:
-        if ":" in host:
-            listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-        listener.bind((host, number))
+    try:
+        with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as listener:
+            if ":" in host:
+                listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            listener.bind((host, number))
+    except OSError as error:
+        if error.errno == errno.EADDRINUSE:
+            raise ValueError(f"TCP {number} is already in use; choose a free port. Existing services are preserved. / TCP {number} 已被占用，请选择空闲端口；不会停止已有服务。") from None
+        raise
+
+
+def installation_preflight(options):
+    address(options.address)
+    name(options.name)
+    check_port(options.listen, port(options.port))
 
 
 def prepare(root, binary, options):
+    # Validate required input before creating directories or generating credentials.
+    client_address = address(options.address)
+    node_name, node_port = name(options.name), port(options.port)
     ensure_owned(root, create=True)
     state = copy.deepcopy(load_state(root))
     if options.kind in state["nodes"]:
         raise ValueError("Protocol already installed / 该协议已安装，先删除再安装会更换凭据")
-    if port(options.port) in [n["port"] for n in state["nodes"].values()]:
+    if node_port in [n["port"] for n in state["nodes"].values()]:
         raise ValueError("TCP port already used by a managed node / 托管节点端口冲突")
-    check_port(options.listen, port(options.port))
-    node = {"name": name(options.name), "uuid": str(uuid.uuid4()), "port": port(options.port),
-            "address": address(options.address), "listen": options.listen, "sni": domain(options.sni)}
+    check_port(options.listen, node_port)
+    node = {"name": node_name, "uuid": str(uuid.uuid4()), "port": node_port,
+            "address": client_address, "listen": options.listen, "sni": domain(options.sni)}
     if options.kind == "xhttp-tls":
         certificate(options.cert, options.key, node["sni"], options.ca_file)
         node.update(cert=f"tls/{node['uuid']}.crt", key=f"tls/{node['uuid']}.key", cdn=options.cdn)
@@ -605,10 +623,32 @@ def download_binary(destination, asset, tag=CORE_VERSION):
     write_private(destination, binary, 0o700)
 
 
+def error_message(error):
+    # External exceptions can contain credential-bearing URLs, paths or core output.
+    if isinstance(error, ValueError):
+        return str(error)
+    if isinstance(error, urllib.error.HTTPError):
+        return f"Download HTTP {error.code}; check GitHub access, rate limits and release availability / 下载返回 HTTP {error.code}，请检查 GitHub 访问、请求限额及版本是否存在"
+    if isinstance(error, ssl.SSLError):
+        return "TLS verification or handshake failed; check the target name, certificate and system time / TLS 验证或握手失败，请检查目标域名、证书和系统时间"
+    if isinstance(error, (TimeoutError, urllib.error.URLError)):
+        return "Network request failed; check DNS, outbound connectivity and retry / 网络请求失败，请检查 DNS、出站连接后重试"
+    if isinstance(error, OSError):
+        if error.errno in (errno.EACCES, errno.EPERM):
+            return "Permission denied; use root and check directory permissions / 权限不足，请使用 root 并检查目录权限"
+        if error.errno == errno.ENOENT:
+            return "Required file or command missing; check file paths and dependencies / 所需文件或命令不存在，请检查文件路径与系统依赖"
+        if error.errno == errno.ENOSPC:
+            return "Insufficient disk space; free space before retrying / 磁盘空间不足，请清理空间后重试"
+    if isinstance(error, subprocess.SubprocessError):
+        return "Core or system command failed; check the binary and service status / 核心或系统命令失败，请检查核心文件及服务状态"
+    return "Operation failed; check files, network and permissions / 操作失败，请检查文件、网络与权限"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "refresh-tls", "show", "guard", "download", "probe", "journal"])
+                                            "remove", "rename", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -634,6 +674,9 @@ def main():
     options = parser.parse_args()
     if options.command == "selfcheck":
         print("SKYBYTE Xray Manager " + VERSION + " OK")
+        return
+    if options.command == "preflight":
+        installation_preflight(options)
         return
     if options.command == "download":
         download_binary(checked_path(options.file), options.asset, options.tag)
@@ -706,9 +749,7 @@ if __name__ == "__main__":
         main()
     except (ValueError, OSError, KeyError, subprocess.SubprocessError, ssl.SSLError, tarfile.TarError,
             zipfile.BadZipFile, TypeError, AttributeError) as error:
-        # Never print external core output, request data, state or credential values.
-        message = str(error) if isinstance(error, ValueError) else "Operation failed / 操作失败，请检查文件、网络与权限"
-        print(message, file=sys.stderr)
+        print(error_message(error), file=sys.stderr)
         sys.exit(1)
 
 SKYBYTE_PYTHON
@@ -875,7 +916,12 @@ install_node(){
  case $kind in vision) node_port=${node_port:-443};; xhttp-reality) node_port=${node_port:-8443};; *) node_port=${node_port:-2053};; esac
  listen=$(ask '监听：1 IPv4  2 IPv6 [1]：' 'Listen: 1 IPv4  2 IPv6 [1]: ') || return 1
  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
- host=$(ask '客户端连接地址（公网 IP 或域名）：' 'Client connection address (public IP/domain): ') || return 1
+ while :; do
+  host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
+  [[ $host =~ [^[:space:]] ]] && break
+  warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
+ done
+ helper preflight --port "$node_port" --listen "$listen" --address "$host" --name "$node_name" || return 1
  if [[ $kind == xhttp-tls ]]; then
   sni=$(ask '证书域名 / TLS SNI：' 'Certificate domain / TLS SNI: ') || return 1
   cert=$(ask '已有可信 fullchain 证书文件绝对路径：' 'Absolute path to trusted fullchain certificate: ') || return 1
@@ -898,12 +944,12 @@ install_node(){
  fi
  warn '请放行实际 TCP 端口；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port; validation does not prove public/CDN connectivity.'
  confirm '安装并启动所选节点？' 'Install and start the selected node?' || return 1
- ensure_binary || return 1
+ ensure_binary || { error '核心准备失败，具体原因见上方提示。' 'Core preparation failed; see the reason above.'; return 1; }
  flags+=(--kind "$kind" --port "$node_port" --listen "$listen" --address "$host" --sni "$sni" --name "$node_name")
  if [[ $kind == xhttp-tls ]]; then flags+=(--cert "$cert" --key "$private_key")
  else flags+=(--target "$target"); fi
  [[ $kind != xhttp-* ]] || flags+=(--path "$path" --mode "$mode")
- stage=$(helper prepare "${flags[@]}") || return 1
+ stage=$(helper prepare "${flags[@]}") || { error '节点配置准备失败，具体原因见上方提示。' 'Node configuration preparation failed; see the reason above.'; return 1; }
  apply_stage "$stage" yes || { error '安装失败，原配置已保留或回退。' 'Install failed; previous configuration retained or restored.'; return 1; }
  show_nodes
 }
@@ -1067,7 +1113,7 @@ main_menu(){
   local choice
   choice=$(ask '请选择：' 'Choose: ') || return 0
   case $choice in
-   1) install_node || error '操作未完成，请检查输入、网络或端口。' 'Operation did not complete; check input, network or ports.';;
+   1) install_node || error '操作未完成或已取消；失败原因见上方提示。' 'Operation did not complete or was cancelled; see the reason above.';;
    2) show_nodes;; 3) qr_nodes || true;; 4) service_menu || true;; 5) edit_nodes || true;;
    6) update_core || error '核心更新失败，已保留或回退原核心。' 'Core update failed; previous core retained or restored.';;
    7) make_backup || true;; 8) restore_backup || error '恢复失败，原配置已保留或回退。' 'Restore failed; previous configuration retained or restored.';;

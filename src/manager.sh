@@ -196,7 +196,12 @@ install_node(){
  case $kind in vision) node_port=${node_port:-443};; xhttp-reality) node_port=${node_port:-8443};; *) node_port=${node_port:-2053};; esac
  listen=$(ask '监听：1 IPv4  2 IPv6 [1]：' 'Listen: 1 IPv4  2 IPv6 [1]: ') || return 1
  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
- host=$(ask '客户端连接地址（公网 IP 或域名）：' 'Client connection address (public IP/domain): ') || return 1
+ while :; do
+  host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
+  [[ $host =~ [^[:space:]] ]] && break
+  warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
+ done
+ helper preflight --port "$node_port" --listen "$listen" --address "$host" --name "$node_name" || return 1
  if [[ $kind == xhttp-tls ]]; then
   sni=$(ask '证书域名 / TLS SNI：' 'Certificate domain / TLS SNI: ') || return 1
   cert=$(ask '已有可信 fullchain 证书文件绝对路径：' 'Absolute path to trusted fullchain certificate: ') || return 1
@@ -219,12 +224,12 @@ install_node(){
  fi
  warn '请放行实际 TCP 端口；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port; validation does not prove public/CDN connectivity.'
  confirm '安装并启动所选节点？' 'Install and start the selected node?' || return 1
- ensure_binary || return 1
+ ensure_binary || { error '核心准备失败，具体原因见上方提示。' 'Core preparation failed; see the reason above.'; return 1; }
  flags+=(--kind "$kind" --port "$node_port" --listen "$listen" --address "$host" --sni "$sni" --name "$node_name")
  if [[ $kind == xhttp-tls ]]; then flags+=(--cert "$cert" --key "$private_key")
  else flags+=(--target "$target"); fi
  [[ $kind != xhttp-* ]] || flags+=(--path "$path" --mode "$mode")
- stage=$(helper prepare "${flags[@]}") || return 1
+ stage=$(helper prepare "${flags[@]}") || { error '节点配置准备失败，具体原因见上方提示。' 'Node configuration preparation failed; see the reason above.'; return 1; }
  apply_stage "$stage" yes || { error '安装失败，原配置已保留或回退。' 'Install failed; previous configuration retained or restored.'; return 1; }
  show_nodes
 }
@@ -388,7 +393,7 @@ main_menu(){
   local choice
   choice=$(ask '请选择：' 'Choose: ') || return 0
   case $choice in
-   1) install_node || error '操作未完成，请检查输入、网络或端口。' 'Operation did not complete; check input, network or ports.';;
+   1) install_node || error '操作未完成或已取消；失败原因见上方提示。' 'Operation did not complete or was cancelled; see the reason above.';;
    2) show_nodes;; 3) qr_nodes || true;; 4) service_menu || true;; 5) edit_nodes || true;;
    6) update_core || error '核心更新失败，已保留或回退原核心。' 'Core update failed; previous core retained or restored.';;
    7) make_backup || true;; 8) restore_backup || error '恢复失败，原配置已保留或回退。' 'Restore failed; previous configuration retained or restored.';;
