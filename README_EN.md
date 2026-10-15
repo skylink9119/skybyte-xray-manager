@@ -2,7 +2,33 @@
 
 [简体中文](README.md) · [YouTube](https://www.youtube.com/@SKYBYTE9119)
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.0**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+If this script helps you, please [subscribe to my SKYBYTE YouTube channel](https://www.youtube.com/@SKYBYTE9119) to support continued maintenance and updates!
+
+<!-- SKYBYTE_AFFILIATE_HEADER_START -->
+## VPS provider affiliate links
+
+### 1. Residential / ISP IP: e-commerce and TikTok environments
+
+**[LisaHost](https://lisahost.com/aff.php?aff=11072)**: consider residential / ISP IP plans when evaluating network environments for cross-border e-commerce, TikTok or overseas account workflows. Confirm the IP type and available regions for the specific plan.
+
+### 2. Premium-route VPS: personal use / sharing / relay entry
+
+**[DMIT](https://www.dmit.io/aff.php?aff=18635)**: offers China-optimized network options, including CN2 GIA. Choose daily-use nodes or entry servers based on your budget and actual route tests.
+
+**[BandwagonHost](https://bandwagonhost.com/aff.php?aff=83101)**: compare plans including CN2 GIA options for personal nodes and entry servers.
+
+### 3. Entry VPS: learning / backup nodes
+
+**[RackNerd](https://my.racknerd.com/aff.php?aff=18647)**: check budget VPS and annual offers for learning Ubuntu/Debian, deploying Xray and running backup nodes.
+
+Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-4095-a586-2a3ee5c970f0)**.
+
+**Affiliate disclosure:** purchases through these links may earn the author a commission to support SKYBYTE development and maintenance. Prices, routes, bandwidth and IP types depend on the specific plan. Test actual speeds and platform availability on your own network.
+<!-- SKYBYTE_AFFILIATE_HEADER_END -->
+
+---
+
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.1**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Nodes
 
@@ -21,7 +47,7 @@ Configure IPv4/IPv6 binding, public client address, ports, names and XHTTP paths
 Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and arm64. Run the complete command in the VPS root terminal:
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.0/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.1/install.sh)
 ```
 
 The installer downloads the matching manager and verifies its release SHA256 before installation. After installation, including after a new SSH login, reopen it with:
