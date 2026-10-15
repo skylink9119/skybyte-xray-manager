@@ -141,5 +141,29 @@ sys.exit(100 if 'update' in sys.argv else 0)
         self.assertNotEqual(result.returncode,0)
         self.assertEqual(len(json.loads(log.read_text())),1)
 
+    def uninstall_fixture(self,foreign=False):
+        self.installed()
+        lib=self.base/'lib';lib.mkdir()
+        (lib/'.owner').write_text(core.OWNER)
+        binary=lib/'xray';binary.write_text('#!/usr/bin/env bash\nexit 0\n');binary.chmod(0o700)
+        (lib/'manager.sh').write_text((PROJECT/'xray-manager.sh').read_text())
+        shortcut=self.base/'xr'
+        shortcut.write_text('foreign command' if foreign else '#!/usr/bin/env bash\n# SKYBYTE Xray Manager shortcut v1\nexec bash '+str(lib/'manager.sh')+' "$@"\n')
+        self.env.update(SKYBYTE_XRAY_BINARY=str(binary),SKYBYTE_XRAY_SHORTCUT=str(shortcut))
+        return shortcut
+
+    def test_uninstall_removes_owned_shortcut_and_preserves_backup(self):
+        shortcut=self.uninstall_fixture()
+        result=self.shell('uninstall <<< YES')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse(shortcut.exists())
+        self.assertTrue(list((self.root/'backups').glob('*.tar.gz')))
+
+    def test_uninstall_preserves_replaced_shortcut(self):
+        shortcut=self.uninstall_fixture(foreign=True)
+        result=self.shell('uninstall <<< yes')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(shortcut.read_text(),'foreign command')
+
 
 if __name__=='__main__': unittest.main()

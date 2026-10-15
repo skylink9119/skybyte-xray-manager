@@ -2,7 +2,7 @@
 
 [English](README_EN.md) · [YouTube](https://www.youtube.com/@SKYBYTE9119)
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。首版本地测试版 **0.1.0**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.0**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
 ## 三种节点
 
@@ -18,7 +18,21 @@
 
 ## 安装
 
-需要 **root、Ubuntu/Debian 和 systemd**；首版二进制支持 amd64、arm64。把完整源码包上传到 VPS，解压后进入项目目录，执行：
+需要 **root、Ubuntu/Debian 和 systemd**；二进制支持 amd64、arm64。在 VPS 的 root 终端执行完整命令：
+
+```bash
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.0/install.sh)
+```
+
+安装入口会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装后，重新登录 SSH 也可以输入下面的快捷命令：
+
+```bash
+xr
+```
+
+更新管理脚本可重新运行安装命令，已有节点状态与凭据保留。`xr` 若已被其他程序占用，安装会停止并保留原文件；不会覆盖 sing-box 的 `sb` 命令。
+
+也可以上传完整发布包，解压后进入目录执行：
 
 ```bash
 bash install.sh
@@ -26,7 +40,7 @@ bash install.sh
 
 也可在完整目录直接运行 `bash xray-manager.sh`。无需 sudo。缺少 Python 或 flock 时，安装入口会询问是否安装基础依赖。APT 索引更新失败会停止，不继续使用旧索引安装。核心仅从官方稳定 Release 下载，并按 GitHub Release 的 SHA256 摘要验证。
 
-独立仓库：[skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager)。首版代码在 `development` 分支，通过 PR 审核后再进入 `main`。完整包包含 `install.sh` 和自包含的 `xray-manager.sh`；不能只复制安装入口而漏掉主脚本。
+独立仓库：[skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager)。正式发布代码位于 `main`。发布页提供安装入口、自包含主脚本、完整源码包与 `SHA256SUMS`；完整包可直接本地安装，单独下载入口时会联网获取主脚本。
 
 首次启动选择语言。菜单和提问绿色加粗，节点信息黄色，链接和错误红色，警告黄色；非终端或 `NO_COLOR=1` 可关闭颜色。YES 确认不区分大小写。
 
@@ -56,6 +70,10 @@ bash install.sh
 
 Reality 模式直连源站，不通过普通 HTTPS CDN 转发。测试 target 的 TLS 1.3/HTTP2 可达性不等于客户端公网连接、抗封锁或速度已验证。
 
+选择 XHTTP-Reality 时无需自己的域名和证书，当前基础配置不添加 Vision flow。建议先使用 Xray 的 XMUX 默认值，不额外叠加 `mux.cool`，再按线路和客户端实测调整；不保证解决运营商限速或断流。
+
+本版 TLS 由 Xray 直接终止。Nginx/Caddy 自动部署、自动签发续期、XMUX 自定义界面和 H3 选择尚未集成。自行前置真实网站可减少直接暴露代理服务的特征，但不能保证完全隐藏。HTTP/3 需要客户端、对端支持及 UDP 可达；通过 CDN 时客户端可用 H3，而回源仍可使用 H2，不需要仅为此让源站监听 QUIC。
+
 ## 导出与客户端
 
 配置目录为 `/etc/skybyte-xray/`，包含：
@@ -66,6 +84,8 @@ Reality 模式直连源站，不通过普通 HTTPS CDN 转发。测试 target �
 
 这是本地导出，未托管为 HTTPS 在线订阅。文件可通过 SSH/SFTP 取回。客户端需要支持所选传输；二维码导入不会补全客户端对 XHTTP 的支持。不要把含 UUID、公钥凭据、私钥、完整链接或二维码的文件和截图公开。
 
+Xray v26.3.27 与 v26.10.10 客户端/服务端在隔离环境的四种连接组合已互通；本版下载器保持正式版通道。原版 sing-box 1.14.3 的 Vision 与本版默认核心连接通过，但原版 sing-box 没有 XHTTP 传输。Mihomo 1.19.32 的 XHTTP-TLS/packet-up 实验通过，Reality 实验未通过，暂不承诺该组合兼容。小火箭及 v2rayN/v2rayNG 的真实 GUI 导入仍需实测。客户端、内核版本和传输方式需分别核对。
+
 ## 配置保护与维护
 
 - 自有配置目录与核心目录权限 700，凭据、导出、证书副本和备份权限 600；私钥不进入命令参数。
@@ -73,9 +93,11 @@ Reality 模式直连源站，不通过普通 HTTPS CDN 转发。测试 target �
 - 添加节点检查托管端口与当前监听占用。非托管文件冲突、符号链接或未知服务会拒绝覆盖。
 - 候选配置经官方核心检查后应用。配置与服务单元有恢复事务；重启失败回退配置、活动状态和开机自启状态。下次启动可恢复未完成事务。
 - 核心更新先检查配置；失败恢复旧核心。删除最后一个协议时停止并禁用本服务。
-- 默认阻止节点访问本地回环、常见内网及链路本地目标，防止使用节点访问服务器私有服务。
+- 默认阻止节点访问本地回环、常见内网及链路本地目标，域名目标先解析再匹配规则。包括私网域名在内的拒绝行为有实际连接回归测试。
 - 备份含 UUID、Reality 私钥及 TLS 私钥，须保密。恢复只读取已知数据结构，不执行备份中的代码或二进制；拒绝路径穿越、软硬链接、重复条目和超大文件。
 - 卸载前必须成功备份，仅删除可识别的托管文件；保留备份、未知文件、外部证书、系统依赖和防火墙规则。
+
+曾部署早期 development 测试版的用户：更新管理脚本不会自动改写运行中的配置。先备份，再在 **5 → 1** 对已安装节点重命名（名称可保持不变），可保留 UUID/密钥并重新生成配置，应用域名封锁修复。若手动编辑过 `config.json`，应另外保存原文件并核对自定义配置；状态备份不能保留未纳入管理器的自定义字段。
 
 ## 开发与测试
 

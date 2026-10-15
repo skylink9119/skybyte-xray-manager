@@ -369,8 +369,10 @@ class EngineTests(TemporaryFixture):
     def test_real_xhttp_reality_connection(self): self.real_connection('xhttp-reality')
     def test_real_xhttp_tls_verified_connection(self): self.real_connection('xhttp-tls')
     def test_real_cdn_packet_up_origin_connection(self): self.real_connection('xhttp-tls',cdn=True,mode='packet-up')
+    def test_private_ip_rejected(self): self.real_connection('vision',block_private=True)
+    def test_private_hostname_rejected(self): self.real_connection('vision',block_private=True,destination_host='localhost')
 
-    def real_connection(self,kind,**changes):
+    def real_connection(self,kind,block_private=False,destination_host=None,**changes):
         # Private lab: trusted local CA, HTTPS camouflage target, and local HTTP endpoint.
         tls_listener=socket.socket();tls_listener.bind(('127.0.0.1',0));tls_listener.listen();tls_listener.settimeout(0.25)
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.minimum_version=ssl.TLSVersion.TLSv1_3
@@ -389,8 +391,10 @@ class EngineTests(TemporaryFixture):
                 except OSError: break
         thread=threading.Thread(target=tls_worker,daemon=True);thread.start()
         import http.server
+        reached=threading.Event()
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                reached.set()
                 body=b'SKYBYTE authenticated proxy test'
                 self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
             def log_message(self,*args): pass
@@ -400,7 +404,8 @@ class EngineTests(TemporaryFixture):
         try:
             node=self.make_protocol(kind,target='localhost:'+str(tls_listener.getsockname()[1]),**changes)
             server=core.server_config(core.load_state(self.root),self.root)
-            server['routing']['rules']=[]  # Lab endpoint is loopback; production blocks private destinations.
+            if not block_private:
+                server['routing']['rules']=[]  # Allow only the isolated lab's endpoint in connection tests.
             server_path=self.base/'lab-server.json';core.write_private(server_path,core.json_text(server))
             socks_port=free_port();client=core.client_config(kind,node,socks_port)
             if kind=='xhttp-tls':
@@ -414,6 +419,7 @@ class EngineTests(TemporaryFixture):
                 try:
                     with socket.create_connection(('127.0.0.1',socks_port),timeout=.2): break
                 except OSError: time.sleep(.1)
+            for process in processes: self.assertIsNone(process.poll(),'Lab process failed to start')
             with socket.create_connection(('127.0.0.1',socks_port),timeout=15) as connection:
                 connection.settimeout(20)
                 def receive(count):
@@ -425,18 +431,26 @@ class EngineTests(TemporaryFixture):
                     return data
                 connection.sendall(b'\x05\x01\x00');self.assertEqual(receive(2),b'\x05\x00')
                 number=endpoint.server_address[1]
-                connection.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01'+number.to_bytes(2,'big'))
+                target=b'\x01\x7f\x00\x00\x01' if destination_host is None else b'\x03'+bytes([len(destination_host)])+destination_host.encode()
+                connection.sendall(b'\x05\x01\x00'+target+number.to_bytes(2,'big'))
                 header=receive(4);self.assertEqual(header[1],0)
                 if header[3]==1: receive(6)
                 elif header[3]==4: receive(18)
                 else: receive(receive(1)[0]+2)
                 connection.sendall(b'GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n')
                 response=b''
+                if block_private: connection.settimeout(2)
                 while b'SKYBYTE authenticated proxy test' not in response:
-                    chunk=connection.recv(4096)
+                    try: chunk=connection.recv(4096)
+                    except (socket.timeout,ConnectionResetError):
+                        if block_private: break
+                        raise
                     if not chunk: break
                     response+=chunk
-                self.assertIn(b'SKYBYTE authenticated proxy test',response)
+                if block_private:
+                    self.assertFalse(reached.is_set(),'Private HTTP endpoint was reached through the proxy')
+                    self.assertNotIn(b'SKYBYTE authenticated proxy test',response)
+                else: self.assertIn(b'SKYBYTE authenticated proxy test',response)
         finally:
             for process in processes:
                 process.terminate()

@@ -216,7 +216,7 @@ def server_config(state, root):
                          "settings": {"clients": [user], "decryption": "none"}, "streamSettings": stream})
     return {"log": {"loglevel": "warning"}, "inbounds": inbounds,
             "outbounds": [{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}],
-            "routing": {"rules": [{"type": "field", "ip": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
+            "routing": {"domainStrategy": "IPOnDemand", "rules": [{"type": "field", "ip": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
                 "192.168.0.0/16", "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"], "outboundTag": "block"}]}}
 
 

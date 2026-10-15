@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · [YouTube](https://www.youtube.com/@SKYBYTE9119)
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Local test version **0.1.0**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.0**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Nodes
 
@@ -18,7 +18,21 @@ Configure IPv4/IPv6 binding, public client address, ports, names and XHTTP paths
 
 ## Installation
 
-Root, Ubuntu/Debian and systemd are required. Initial binary mappings support amd64 and arm64. Upload and extract the **complete** source package, enter its directory and run:
+Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and arm64. Run the complete command in the VPS root terminal:
+
+```bash
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.0/install.sh)
+```
+
+The installer downloads the matching manager and verifies its release SHA256 before installation. After installation, including after a new SSH login, reopen it with:
+
+```bash
+xr
+```
+
+Rerun the installer to update the manager while preserving existing node state and credentials. A conflicting third-party xr command stops installation without overwriting it. The sing-box sb shortcut is unaffected.
+
+Alternatively upload and extract the complete release package, enter its directory and run:
 
 ```bash
 bash install.sh
@@ -26,7 +40,7 @@ bash install.sh
 
 Alternatively run `bash xray-manager.sh`. No sudo is needed. Missing bootstrap dependencies prompt for confirmation. APT index errors stop installation instead of continuing with stale indexes. The official stable core download is checked against its GitHub Release SHA256 digest.
 
-Independent repository: [skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager). The first version lives on `development` and is reviewed through a PR before entering `main`. Keep install.sh and xray-manager.sh together when using the complete package.
+Independent repository: [skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager). Released source lives on main. Releases include the installer, standalone manager, complete source archive and SHA256SUMS. Complete packages install locally; an installer downloaded alone fetches its payload online.
 
 Menus and prompts are bold green; metadata and warnings yellow; links and errors red. YES is case-insensitive. Non-terminal output and NO_COLOR disable color.
 
@@ -53,6 +67,10 @@ No default self-signed TLS or insecure client verification. Existing certificate
 
 Reality connects directly and is not transported by ordinary HTTPS CDN proxying. Successful target checks do not prove public client connectivity, resistance to blocking or better speed.
 
+XHTTP-Reality requires no personal domain or certificate. The basic configuration does not add Vision flow. Start with Xray's XMUX defaults without mux.cool; measure your route before tuning. This does not guarantee relief from throttling or disconnects.
+
+In this release Xray terminates TLS directly. Automatic Nginx/Caddy deployment, certificate issuance/renewal, custom XMUX controls and H3 selection are not integrated. A real fronting website can reduce direct proxy exposure but cannot guarantee invisibility. HTTP/3 requires client/peer support and reachable UDP. With a CDN, the client may use H3 while the origin still uses H2; this does not require enabling QUIC at the origin.
+
 ## Exports
 
 Private files under `/etc/skybyte-xray/`:
@@ -63,13 +81,17 @@ Private files under `/etc/skybyte-xray/`:
 
 These are local exports, not hosted HTTPS subscriptions. Retrieve through SSH/SFTP. Clients must implement the chosen transport; QR import does not add XHTTP support. Keep UUIDs, Reality credentials, private keys, full links, QR codes and backups private.
 
+All four isolated connection cases passed with Xray v26.3.27/v26.10.10 clients and servers in both directions; the downloader keeps the stable channel. Original sing-box 1.14.3 passed Vision against the pinned core but has no XHTTP transport. Mihomo 1.19.32 passed XHTTP-TLS/packet-up experiments; Reality experiments failed, so that combination is not promised. Actual Shadowrocket and v2rayN/v2rayNG GUI imports still need device testing. Check the app, embedded core and transport separately.
+
 ## Protection and operations
 
 Owned directories use 700; state, exports, private certificates and backups use 600. Private keys never enter command arguments. The service is skybyte-xray.service and the binary/manager are under /usr/local/lib/skybyte-xray. Existing xray.service, sing-box and panel configurations are not taken over.
 
 Refuses unknown ownership, unmanaged file collisions, symlinks and occupied TCP ports. Candidates are checked by the official engine. Configuration/service transactions restore previous files, activity and boot state on restart failure; startup recovers interrupted changes. Core updates validate existing configuration and roll back on failure. Removing the final protocol stops/disables the owned service.
 
-Production routing blocks common private, loopback and link-local destinations. Backups contain sensitive credentials; protect them. Restore accepts known data only, never executes archived programs, and rejects traversal, links, duplicates and excessive sizes. Uninstall requires a successful backup and preserves backups, unknown files, external certificates, dependencies and firewall rules.
+Production routing resolves domain targets before matching private, loopback and link-local blocks. Actual connection regressions cover both private IPs and hostnames. Backups contain sensitive credentials; protect them. Restore accepts known data only, never executes archived programs, and rejects traversal, links, duplicates and excessive sizes. Uninstall requires a successful backup and preserves backups, unknown files, external certificates, dependencies and firewall rules.
+
+For early development installs, updating the manager does not rewrite the running configuration. Back up first, then use **5 → 1** to rename an installed node (the name may stay the same). This regenerates configuration with the hostname-block fix while keeping UUIDs/keys. If config.json was edited manually, save that file separately and reconcile custom settings; state backups do not retain fields outside the manager's model.
 
 ## Development and validation
 
