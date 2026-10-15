@@ -3,7 +3,9 @@
 ## 0.1.1 — 2026-10-15
 
 - Add the SKYBYTE YouTube subscription invitation and owner-supplied VPS affiliate links to both READMEs.
-- Publish matching source archives and installer version metadata; node configuration behavior is unchanged.
+- Require the public client address, re-prompt empty input and check TCP port availability before target probes or core downloads.
+- Explain occupied ports, permissions, missing files, disk space and download/TLS failures without exposing external exception secrets; preserve existing services and configurations.
+- Add installation-input, port-conflict and diagnostic-redaction regressions; publish matching source archives and installer metadata.
 
 ## 0.1.0 — 2026-10-15
 

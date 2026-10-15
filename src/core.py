@@ -7,6 +7,7 @@ Only generated runtime state contains credentials. No imported content is execut
 import argparse
 import base64
 import copy
+import errno
 import hashlib
 import io
 import ipaddress
@@ -21,6 +22,7 @@ import sys
 import tarfile
 import tempfile
 import urllib.parse
+import urllib.error
 import urllib.request
 import uuid
 import zipfile
@@ -76,6 +78,8 @@ def domain(value):
 
 def address(value):
     value = value.strip()
+    if not value:
+        raise ValueError("Client address required: enter your VPS public IP or domain / 客户端连接地址必填：请输入本 VPS 的公网 IP 或域名")
     try:
         return str(ipaddress.ip_address(value))
     except ValueError:
@@ -313,22 +317,36 @@ def render_files(state, root):
 
 
 def check_port(host, number):
-    with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as listener:
-        if ":" in host:
-            listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-        listener.bind((host, number))
+    try:
+        with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as listener:
+            if ":" in host:
+                listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            listener.bind((host, number))
+    except OSError as error:
+        if error.errno == errno.EADDRINUSE:
+            raise ValueError(f"TCP {number} is already in use; choose a free port. Existing services are preserved. / TCP {number} 已被占用，请选择空闲端口；不会停止已有服务。") from None
+        raise
+
+
+def installation_preflight(options):
+    address(options.address)
+    name(options.name)
+    check_port(options.listen, port(options.port))
 
 
 def prepare(root, binary, options):
+    # Validate required input before creating directories or generating credentials.
+    client_address = address(options.address)
+    node_name, node_port = name(options.name), port(options.port)
     ensure_owned(root, create=True)
     state = copy.deepcopy(load_state(root))
     if options.kind in state["nodes"]:
         raise ValueError("Protocol already installed / 该协议已安装，先删除再安装会更换凭据")
-    if port(options.port) in [n["port"] for n in state["nodes"].values()]:
+    if node_port in [n["port"] for n in state["nodes"].values()]:
         raise ValueError("TCP port already used by a managed node / 托管节点端口冲突")
-    check_port(options.listen, port(options.port))
-    node = {"name": name(options.name), "uuid": str(uuid.uuid4()), "port": port(options.port),
-            "address": address(options.address), "listen": options.listen, "sni": domain(options.sni)}
+    check_port(options.listen, node_port)
+    node = {"name": node_name, "uuid": str(uuid.uuid4()), "port": node_port,
+            "address": client_address, "listen": options.listen, "sni": domain(options.sni)}
     if options.kind == "xhttp-tls":
         certificate(options.cert, options.key, node["sni"], options.ca_file)
         node.update(cert=f"tls/{node['uuid']}.crt", key=f"tls/{node['uuid']}.key", cdn=options.cdn)
@@ -568,10 +586,32 @@ def download_binary(destination, asset, tag=CORE_VERSION):
     write_private(destination, binary, 0o700)
 
 
+def error_message(error):
+    # External exceptions can contain credential-bearing URLs, paths or core output.
+    if isinstance(error, ValueError):
+        return str(error)
+    if isinstance(error, urllib.error.HTTPError):
+        return f"Download HTTP {error.code}; check GitHub access, rate limits and release availability / 下载返回 HTTP {error.code}，请检查 GitHub 访问、请求限额及版本是否存在"
+    if isinstance(error, ssl.SSLError):
+        return "TLS verification or handshake failed; check the target name, certificate and system time / TLS 验证或握手失败，请检查目标域名、证书和系统时间"
+    if isinstance(error, (TimeoutError, urllib.error.URLError)):
+        return "Network request failed; check DNS, outbound connectivity and retry / 网络请求失败，请检查 DNS、出站连接后重试"
+    if isinstance(error, OSError):
+        if error.errno in (errno.EACCES, errno.EPERM):
+            return "Permission denied; use root and check directory permissions / 权限不足，请使用 root 并检查目录权限"
+        if error.errno == errno.ENOENT:
+            return "Required file or command missing; check file paths and dependencies / 所需文件或命令不存在，请检查文件路径与系统依赖"
+        if error.errno == errno.ENOSPC:
+            return "Insufficient disk space; free space before retrying / 磁盘空间不足，请清理空间后重试"
+    if isinstance(error, subprocess.SubprocessError):
+        return "Core or system command failed; check the binary and service status / 核心或系统命令失败，请检查核心文件及服务状态"
+    return "Operation failed; check files, network and permissions / 操作失败，请检查文件、网络与权限"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "refresh-tls", "show", "guard", "download", "probe", "journal"])
+                                            "remove", "rename", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -597,6 +637,9 @@ def main():
     options = parser.parse_args()
     if options.command == "selfcheck":
         print("SKYBYTE Xray Manager " + VERSION + " OK")
+        return
+    if options.command == "preflight":
+        installation_preflight(options)
         return
     if options.command == "download":
         download_binary(checked_path(options.file), options.asset, options.tag)
@@ -669,7 +712,5 @@ if __name__ == "__main__":
         main()
     except (ValueError, OSError, KeyError, subprocess.SubprocessError, ssl.SSLError, tarfile.TarError,
             zipfile.BadZipFile, TypeError, AttributeError) as error:
-        # Never print external core output, request data, state or credential values.
-        message = str(error) if isinstance(error, ValueError) else "Operation failed / 操作失败，请检查文件、网络与权限"
-        print(message, file=sys.stderr)
+        print(error_message(error), file=sys.stderr)
         sys.exit(1)

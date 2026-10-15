@@ -3,6 +3,7 @@
 import argparse
 import base64
 import copy
+import errno
 import hashlib
 import importlib.util
 import io
@@ -19,6 +20,7 @@ import time
 import unittest
 from unittest import mock
 import urllib.parse
+import urllib.error
 import uuid
 import zipfile
 
@@ -173,6 +175,96 @@ class TemporaryFixture(unittest.TestCase):
         self.unit=self.base/'skybyte-xray.service'
 
     def tearDown(self): self.temp.cleanup()
+
+
+class InstallationInputTests(TemporaryFixture):
+    def cli(self, *arguments):
+        return subprocess.run(['bash', '-c', 'source "$1"; helper preflight "${@:2}"',
+            'test', str(PROJECT/'xray-manager.sh'), '--root', str(self.root), *arguments],
+            capture_output=True, text=True, timeout=10)
+
+    def test_missing_client_address_rejected_without_creating_config(self):
+        result = self.cli('--address', '   ')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('客户端连接地址必填', result.stderr)
+        self.assertFalse(self.root.exists())
+
+    def test_invalid_port_rejected_without_creating_config(self):
+        result = self.cli('--address', 'example.com', '--port', '65536')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('1–65535', result.stderr)
+        self.assertFalse(self.root.exists())
+
+    def test_available_port_preflight_does_not_create_config(self):
+        result = self.cli('--address', 'example.com', '--listen', '127.0.0.1', '--port', str(free_port()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.root.exists())
+
+    def test_occupied_port_has_actionable_message(self):
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0)); listener.listen()
+            number = listener.getsockname()[1]
+            result = self.cli('--address', 'example.com', '--listen', '127.0.0.1', '--port', str(number))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f'TCP {number}', result.stderr)
+            self.assertIn('已被占用', result.stderr)
+            self.assertIn('choose a free port', result.stderr)
+            self.assertFalse(self.root.exists())
+
+    def test_blank_address_reprompts_and_port_conflict_stops_before_network(self):
+        sentinel = self.base/'unexpected-action'
+        script = '''source "$1"
+helper(){
+ if [[ $1 == preflight ]]; then python3 "$CORE_SOURCE" "$@"
+ else touch "$UNEXPECTED_INSTALL_ACTION"; return 1; fi
+}
+ensure_binary(){ touch "$UNEXPECTED_INSTALL_ACTION"; return 1; }
+LANGUAGE=$2
+install_node
+'''
+        with socket.socket() as listener:
+            listener.bind(('0.0.0.0', 0)); listener.listen()
+            number = listener.getsockname()[1]
+            for language in ['zh', 'en']:
+                with self.subTest(language=language):
+                    result = subprocess.run(['bash', '-c', script, 'test', str(PROJECT/'xray-manager.sh'), language],
+                        input=f'1\n\n{number}\n1\n   \n127.0.0.1\n', capture_output=True, text=True, timeout=10,
+                        env={**os.environ, 'CORE_SOURCE':str(PROJECT/'src/core.py'),
+                             'UNEXPECTED_INSTALL_ACTION':str(sentinel), 'SKYBYTE_XRAY_DIR':str(self.root)})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('没有默认值' if language == 'zh' else 'There is no default', result.stdout)
+                    self.assertIn(f'TCP {number}', result.stderr)
+                    self.assertFalse(sentinel.exists())
+                    self.assertFalse(self.root.exists())
+
+    def test_port_taken_after_preflight_preserves_existing_config(self):
+        core.ensure_owned(self.root, True)
+        state = {'schema':1, 'nodes':{'vision':example_node()}}
+        for relative, data in core.render_files(state, self.root).items():
+            core.write_private(self.root/relative, data)
+        original = {path.name:path.read_bytes() for path in self.root.iterdir() if path.is_file()}
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0)); listener.listen()
+            with self.assertRaisesRegex(ValueError, '已被占用'):
+                core.prepare(self.root, Path('/unavailable-core'),
+                             options('xhttp-reality', port=str(listener.getsockname()[1])))
+        self.assertEqual(original, {path.name:path.read_bytes() for path in self.root.iterdir() if path.is_file()})
+        self.assertFalse(list(self.root.glob('.stage-*')))
+
+    def test_error_categories_do_not_expose_external_secrets(self):
+        secret = 'SECRET_NOT_FOR_LOGS'
+        cases = [(PermissionError(errno.EACCES, secret, '/'+secret), '权限不足'),
+                 (FileNotFoundError(errno.ENOENT, secret, '/'+secret), '不存在'),
+                 (OSError(errno.ENOSPC, secret), '磁盘空间不足'),
+                 (urllib.error.HTTPError('https://'+secret, 403, secret, {}, None), 'HTTP 403'),
+                 (urllib.error.URLError(secret), '网络请求失败'),
+                 (ssl.SSLError(secret), 'TLS 验证'),
+                 (subprocess.CalledProcessError(1, [secret], output=secret), '命令失败')]
+        for error, expected in cases:
+            with self.subTest(category=type(error).__name__):
+                message = core.error_message(error)
+                self.assertIn(expected, message)
+                self.assertNotIn(secret, message)
 
 
 class FileTests(TemporaryFixture):
@@ -336,7 +428,8 @@ class EngineTests(TemporaryFixture):
     def test_port_collision_not_overwritten(self):
         with socket.socket() as listener:
             listener.bind(('127.0.0.1',0));listener.listen()
-            with self.assertRaises(OSError): core.prepare(self.root,Path(ENGINE),options(port=str(listener.getsockname()[1])))
+            with self.assertRaisesRegex(ValueError, '已被占用'):
+                core.prepare(self.root,Path(ENGINE),options(port=str(listener.getsockname()[1])))
         self.assertFalse((self.root/'state.json').exists())
 
     def test_certificate_key_and_hostname_validation(self):
