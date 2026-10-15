@@ -2,7 +2,33 @@
 
 [English](README_EN.md) · [YouTube](https://www.youtube.com/@SKYBYTE9119)
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.0**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+如果这个脚本对你有帮助，欢迎[订阅我的 YouTube 频道 SKYBYTE](https://www.youtube.com/@SKYBYTE9119)，支持后续维护与更新！
+
+<!-- SKYBYTE_AFFILIATE_HEADER_START -->
+## VPS 服务商推广链接
+
+### 1. 住宅 / ISP IP：跨境电商、TikTok 网络环境
+
+**[丽萨主机（LisaHost）](https://lisahost.com/aff.php?aff=11072)**：可关注住宅 / ISP IP 套餐，按应用需求评估跨境电商、TikTok 和海外账号运营所需的网络环境。IP 类型和可用地区以具体套餐为准。
+
+### 2. 精品线路 VPS：主力自用 / 朋友分享 / 中转前置
+
+**[DMIT](https://www.dmit.io/aff.php?aff=18635)**：提供包括 CN2 GIA 在内的中国大陆优化线路方案，可按预算和实际线路测试选择日常节点或入口服务器。
+
+**[搬瓦工（BandwagonHost）](https://bandwagonhost.com/aff.php?aff=83101)**：可关注 CN2 GIA 等线路套餐，适合比较日常自用和入口服务器的线路选择。
+
+### 3. 入门 VPS：新手练手 / 备用节点
+
+**[RackNerd](https://my.racknerd.com/aff.php?aff=18647)**：可关注低预算 VPS 和年付优惠，用于练习 Ubuntu/Debian、部署 Xray 和搭建备用节点。
+
+其他选择：**[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-4095-a586-2a3ee5c970f0)**。
+
+**推广说明：** 通过以上链接购买，可能为作者带来佣金，用于支持 SKYBYTE 项目的开发与维护。价格、线路、带宽和 IP 类型以商家具体套餐为准；实际速度及平台可用性需要结合自己的网络测试。
+<!-- SKYBYTE_AFFILIATE_HEADER_END -->
+
+---
+
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.1**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
 ## 三种节点
 
@@ -21,7 +47,7 @@
 需要 **root、Ubuntu/Debian 和 systemd**；二进制支持 amd64、arm64。在 VPS 的 root 终端执行完整命令：
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.0/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.1/install.sh)
 ```
 
 安装入口会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装后，重新登录 SSH 也可以输入下面的快捷命令：
