@@ -35,7 +35,7 @@
 | 安装方式 | 传输与安全 | 默认 TCP 端口 | 准备条件 |
 | --- | --- | --- | --- |
 | VLESS + Reality + Vision | RAW/TCP + Reality，Vision flow | 443 | 可达、支持 TLS 1.3 和 HTTP/2 的握手目标 |
-| VLESS + XHTTP + Reality | XHTTP + Reality，不混入 Vision flow | 8443 | 同上，无需自己的域名证书 |
+| VLESS + XHTTP + Reality | XHTTP + Reality，不混入 Vision flow | 443 | 同上，无需自己的域名证书 |
 | VLESS + XHTTP + TLS/CDN | XHTTP + TLS，默认开启验证 | 2053 | 自有域名、已有可信 fullchain 与匹配私钥 |
 
 可依次安装三种节点，每种协议一个入口、不同 TCP 端口。重复安装已存在的协议会拒绝；编辑节点、更新证书和核心升级保留已有 UUID 与密钥。删除后重新安装会生成新凭据。

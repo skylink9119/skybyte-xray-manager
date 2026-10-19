@@ -1632,10 +1632,10 @@ install_node(){
  local flags=()
  menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n0. Back'
  choice=$(ask '> ' '> ') || return 1
- case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=8443;; 3) kind=xhttp-tls; node_port=2053;; 0) return 0;; *) return 1;; esac
+ case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 0) return 0;; *) return 1;; esac
  node_name=$(ask '节点名称 [SKYBYTE]：' 'Node name [SKYBYTE]: ') || return 1; node_name=${node_name:-SKYBYTE}-$kind
  node_port=$(ask "监听 TCP 端口 [$node_port]：" "TCP listen port [$node_port]: ") || return 1
- case $kind in vision) node_port=${node_port:-443};; xhttp-reality) node_port=${node_port:-8443};; *) node_port=${node_port:-2053};; esac
+ case $kind in vision|xhttp-reality) node_port=${node_port:-443};; *) node_port=${node_port:-2053};; esac
  listen=$(ask '监听：1 IPv4  2 IPv6 [1]：' 'Listen: 1 IPv4  2 IPv6 [1]: ') || return 1
  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
  while :; do

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Default new XHTTP/Reality nodes to TCP 443 instead of 8443, retaining manual port selection and occupied-port checks.
 - Replace ambiguous [YES] prompts with explicit type-YES/Enter-to-cancel instructions; report cancelled node installation normally without core preparation or node writes.
 
 - Add numbered Reality handshake domain presets for Microsoft, Apple, Amazon, Cloudflare and Google, plus custom/direct input and a back option in both languages.

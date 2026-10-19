@@ -35,7 +35,7 @@ An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0
 | Mode | Transport and security | Default TCP port | Requirements |
 | --- | --- | --- | --- |
 | VLESS + Reality + Vision | RAW/TCP + Reality, Vision flow | 443 | Reachable TLS 1.3/HTTP2 camouflage target |
-| VLESS + XHTTP + Reality | XHTTP + Reality, without Vision flow | 8443 | Same target requirements; no personal domain certificate |
+| VLESS + XHTTP + Reality | XHTTP + Reality, without Vision flow | 443 | Same target requirements; no personal domain certificate |
 | VLESS + XHTTP + TLS/CDN | XHTTP + verified TLS | 2053 | Domain and existing trusted fullchain/matching private key |
 
 One node per mode; all three can run together on separate ports. Existing modes cannot be silently replaced. Renaming, certificate refresh and core updates preserve credentials. Removal and reinstallation generate new credentials.
