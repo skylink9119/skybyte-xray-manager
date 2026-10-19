@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.6 — 2026-10-19
 
 - Fix first-run UFW rule insertion with prepend instead of insert 1; add real distribution frontend compatibility checks with an isolated backend.
 - Report failed UFW commands, exit codes and safe error categories instead of generic core errors. CI installs the distro UFW package for frontend regression checks.
