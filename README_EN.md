@@ -83,10 +83,19 @@ The client connection address is required: enter this VPS's public IP or a domai
 7/8. Back up/restore configuration
 9/10/11. Guide, language and uninstall
 12. Firewall / BBR
+13. Update manager script (development builds)
 
 Permit actual TCP ports in the system firewall and provider security group. Menu 12 manages host TCP allows; provider security groups remain manual.
 
 Use **5 → 4** to edit an installed node's client address, TCP listen port and XHTTP path. Enter keeps each value; leaving every field blank returns without restarting. Vision has no path prompt. UUIDs, Reality keys, Short IDs, TLS SNI, certificates and other nodes are retained. Input, managed port conflicts and changed port availability are checked before staging. Server configuration, links, Base64 and Xray client JSON are regenerated together. Active services restart with rollback on failure; stopped services stay stopped. Re-import clients from menu 2 and allow the new TCP port; CDN users must also check provider port support.
+
+## Manager self-update (development builds)
+
+Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for YES before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. This entry is not included in v0.1.3; install a newer release once to obtain it.
+
+The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
+
+After success the old menu exits; run `xr` again. The backup retains one previous script. Use Git or a source archive to update local source checkouts. Standalone copies must be installed with `install.sh` first; this entry updates only the managed installation.
 
 ## Firewall and BBR
 

@@ -820,10 +820,122 @@ def bbr_change(enable, path=BBR_PATH):
         raise
 
 
+MANAGER_REPO = "skylink9119/skybyte-xray-manager"
+MANAGER_HEADER = b"#!/usr/bin/env bash\n# SKYBYTE Xray Manager standalone;"
+MAX_MANAGER = 2 * 1024 * 1024
+
+
+def manager_version(tag):
+    if not isinstance(tag, str) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
+        raise ValueError("Invalid manager version / 管理脚本版本无效")
+    return tuple(map(int, tag[1:].split(".")))
+
+
+def manager_release(tag=None):
+    if tag is not None:
+        manager_version(tag)
+    endpoint = "latest" if tag is None else "tags/" + tag
+    request = urllib.request.Request("https://api.github.com/repos/" + MANAGER_REPO + "/releases/" + endpoint,
+                                     headers={"User-Agent": "SKYBYTE-Xray-Manager", "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = response.read(MAX_MANAGER + 1)
+    if len(data) > MAX_MANAGER:
+        raise ValueError("Release metadata too large / 发布信息过大")
+    metadata = json.loads(data)
+    actual = metadata.get("tag_name")
+    manager_version(actual)
+    if metadata.get("draft") or metadata.get("prerelease") or (tag is not None and actual != tag):
+        raise ValueError("Not the requested stable manager release / 不是指定的正式管理脚本发布")
+    return metadata
+
+
+def manager_asset(metadata, filename):
+    assets = [asset for asset in metadata["assets"] if asset.get("name") == filename]
+    if len(assets) != 1:
+        raise ValueError("Manager release asset missing or duplicated / 管理脚本发布附件缺失或重复")
+    asset = assets[0]
+    expected_url = "https://github.com/" + MANAGER_REPO + "/releases/download/" + metadata["tag_name"] + "/" + filename
+    if asset.get("browser_download_url") != expected_url:
+        raise ValueError("Unexpected manager download URL / 管理脚本下载地址异常")
+    digest = asset.get("digest", "")
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
+        raise ValueError("Manager release SHA256 unavailable / 管理脚本官方 SHA256 不可用")
+    with urllib.request.urlopen(expected_url, timeout=120) as response:
+        payload = response.read(MAX_MANAGER + 1)
+    if len(payload) > MAX_MANAGER or "sha256:" + hashlib.sha256(payload).hexdigest() != digest:
+        raise ValueError("Manager release SHA256 mismatch / 管理脚本发布 SHA256 校验失败")
+    return payload
+
+
+def manager_target(target):
+    target = checked_path(target)
+    if target.name != "manager.sh":
+        raise ValueError("Update the installed manager.sh only / 仅支持更新已安装的 manager.sh")
+    marker = checked_path(target.parent / ".owner")
+    if not marker.is_file() or marker.read_text() != OWNER:
+        raise ValueError("Manager is not installed here; use install.sh first / 此目录不是已安装的管理器，请先运行 install.sh")
+    backup = checked_path(target.parent / "manager.previous.sh")
+    for path in (target, backup):
+        if path.exists() and (not path.is_file() or not path.read_bytes().startswith(MANAGER_HEADER)):
+            raise ValueError("Existing manager/backup is not owned / 已有脚本或备份不属于本管理器")
+    if not target.is_file():
+        raise ValueError("Installed manager missing / 已安装的管理脚本缺失")
+    return target, backup
+
+
+def check_manager(path, tag):
+    system_command(["bash", "-n", str(path)])
+    version = system_command(["bash", str(path), "--version"]).stdout.strip()
+    selfcheck = system_command(["bash", str(path), "--self-check"]).stdout.strip()
+    if version != "SKYBYTE Xray Manager " + tag[1:] or selfcheck != version + " OK":
+        raise ValueError("Manager version/self-check mismatch / 管理脚本版本或自检不符")
+
+
+def manager_update(target, tag):
+    if manager_version(tag) <= manager_version("v" + VERSION):
+        raise ValueError("Manager downgrade/reinstall refused / 不更新到相同或更旧的管理脚本版本")
+    target, backup = manager_target(target)
+    old = target.read_bytes()
+    installed = re.findall(rb"^VERSION=([0-9]+\.[0-9]+\.[0-9]+)$", old, re.MULTILINE)
+    if len(installed) != 1 or manager_version(tag) <= manager_version("v" + installed[0].decode("ascii")):
+        raise ValueError("Installed manager is newer or its version is unknown / 已安装脚本版本较新或无法识别，不覆盖")
+    metadata = manager_release(tag)
+    manifest = manager_asset(metadata, "SHA256SUMS").decode("utf-8")
+    checksums = []
+    for line in manifest.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[1] == "xray-manager.sh":
+            checksums.append(fields[0])
+    if len(checksums) != 1 or not re.fullmatch(r"[a-f0-9]{64}", checksums[0]):
+        raise ValueError("Invalid manager checksum manifest / 管理脚本校验清单无效")
+    payload = manager_asset(metadata, "xray-manager.sh")
+    if hashlib.sha256(payload).hexdigest() != checksums[0] or not payload.startswith(MANAGER_HEADER):
+        raise ValueError("Manager payload mismatch / 管理脚本内容校验失败")
+    descriptor, filename = tempfile.mkstemp(prefix=".manager-update-", dir=target.parent)
+    os.close(descriptor)
+    candidate = Path(filename)
+    try:
+        write_private(candidate, payload, 0o700)
+        # Only the verified release payload is executed for its built-in diagnostics.
+        check_manager(candidate, tag)
+        write_private(backup, old, 0o700)
+        write_private(target, payload, 0o700)
+        try:
+            check_manager(target, tag)
+        except BaseException as error:
+            try:
+                write_private(target, old, 0o700)
+            except OSError:
+                raise ValueError("Manager rollback incomplete; restore manager.previous.sh / 脚本回退未完成，请从 manager.previous.sh 恢复") from error
+            raise
+    finally:
+        candidate.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore"])
+                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -848,11 +960,20 @@ def main():
     parser.add_argument("--tag", default=CORE_VERSION)
     parser.add_argument("--ports", nargs="+", default=[])
     parser.add_argument("--zone", default="")
+    parser.add_argument("--release", default="")
     options = parser.parse_args()
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
         options.address = options.address if options.address is not None else ""
         options.path = options.path if options.path is not None else ""
+    if options.command == "manager-latest":
+        tag = manager_release()["tag_name"]
+        if manager_version(tag) > manager_version("v" + VERSION):
+            print(tag)
+        return
+    if options.command == "manager-update":
+        manager_update(checked_path(options.file), options.release)
+        return
     if options.command == "node-ports":
         root = checked_path(options.root)
         ensure_owned(root)
@@ -1380,13 +1501,29 @@ network_menu(){
   0) return 0;; *) return 1;;
  esac
 }
+update_manager(){
+ local tag
+ say "当前管理脚本：v${VERSION}，正在检查最新正式版……" "Current manager: v$VERSION; checking the latest stable release…"
+ tag=$(helper manager-latest) || return 1
+ if [[ -z $tag ]]; then
+  say '当前版本已不低于最新正式版。' 'The current version is at least as new as the latest stable release.'
+  return 2
+ fi
+ say "可更新到：$tag" "Available update: $tag"
+ confirm '校验并更新管理脚本？节点和核心保持原样，成功后请重新运行 xr。' 'Verify and update the manager? Nodes and core are retained; reopen with xr after success.' || return 2
+ if ! helper manager-update --release "$tag" --file "$SKYBYTE_XRAY_LIB/manager.sh"; then
+  error '管理脚本更新未完成，请检查上方原因；已有备份位于 manager.previous.sh。' 'Manager update did not complete; check the reason above. Any saved backup is manager.previous.sh.'
+  return 1
+ fi
+ say '管理脚本已更新，旧脚本保存为 manager.previous.sh。请重新输入 xr。' 'Manager updated; the old script is saved as manager.previous.sh. Run xr again.'
+}
 main_menu(){
  while :; do
   printf '%s\n' '============================================================'
   printf '%sSKYBYTE Xray Manager v%s%s\n' "$CYAN" "$VERSION" "$RESET"
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
-  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n0. Exit'
+  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n13. 更新管理脚本\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n13. Update manager script\n0. Exit'
   local choice
   choice=$(ask '请选择：' 'Choose: ') || return 0
   case $choice in
@@ -1395,7 +1532,8 @@ main_menu(){
    6) update_core || error '核心更新失败，已保留或回退原核心。' 'Core update failed; previous core retained or restored.';;
    7) make_backup || true;; 8) restore_backup || error '恢复失败，原配置已保留或回退。' 'Restore failed; previous configuration retained or restored.';;
    9) guide;; 10) choose_language || true;; 11) uninstall || error '卸载未完成。' 'Uninstall did not complete.';;
-   12) network_menu || error '网络设置未完成，具体原因见上方提示。' 'Network settings did not complete; see the reason above.';; 0) return 0;;
+   12) network_menu || error '网络设置未完成，具体原因见上方提示。' 'Network settings did not complete; see the reason above.';;
+   13) if update_manager; then return 0; fi;; 0) return 0;;
    *) warn '选项无效。' 'Invalid option.';;
   esac
  done

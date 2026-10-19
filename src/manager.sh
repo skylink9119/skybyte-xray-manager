@@ -442,13 +442,29 @@ network_menu(){
   0) return 0;; *) return 1;;
  esac
 }
+update_manager(){
+ local tag
+ say "当前管理脚本：v${VERSION}，正在检查最新正式版……" "Current manager: v$VERSION; checking the latest stable release…"
+ tag=$(helper manager-latest) || return 1
+ if [[ -z $tag ]]; then
+  say '当前版本已不低于最新正式版。' 'The current version is at least as new as the latest stable release.'
+  return 2
+ fi
+ say "可更新到：$tag" "Available update: $tag"
+ confirm '校验并更新管理脚本？节点和核心保持原样，成功后请重新运行 xr。' 'Verify and update the manager? Nodes and core are retained; reopen with xr after success.' || return 2
+ if ! helper manager-update --release "$tag" --file "$SKYBYTE_XRAY_LIB/manager.sh"; then
+  error '管理脚本更新未完成，请检查上方原因；已有备份位于 manager.previous.sh。' 'Manager update did not complete; check the reason above. Any saved backup is manager.previous.sh.'
+  return 1
+ fi
+ say '管理脚本已更新，旧脚本保存为 manager.previous.sh。请重新输入 xr。' 'Manager updated; the old script is saved as manager.previous.sh. Run xr again.'
+}
 main_menu(){
  while :; do
   printf '%s\n' '============================================================'
   printf '%sSKYBYTE Xray Manager v%s%s\n' "$CYAN" "$VERSION" "$RESET"
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
-  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n0. Exit'
+  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n13. 更新管理脚本\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n13. Update manager script\n0. Exit'
   local choice
   choice=$(ask '请选择：' 'Choose: ') || return 0
   case $choice in
@@ -457,7 +473,8 @@ main_menu(){
    6) update_core || error '核心更新失败，已保留或回退原核心。' 'Core update failed; previous core retained or restored.';;
    7) make_backup || true;; 8) restore_backup || error '恢复失败，原配置已保留或回退。' 'Restore failed; previous configuration retained or restored.';;
    9) guide;; 10) choose_language || true;; 11) uninstall || error '卸载未完成。' 'Uninstall did not complete.';;
-   12) network_menu || error '网络设置未完成，具体原因见上方提示。' 'Network settings did not complete; see the reason above.';; 0) return 0;;
+   12) network_menu || error '网络设置未完成，具体原因见上方提示。' 'Network settings did not complete; see the reason above.';;
+   13) if update_manager; then return 0; fi;; 0) return 0;;
    *) warn '选项无效。' 'Invalid option.';;
   esac
  done
