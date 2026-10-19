@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.9 — 2026-10-19
 
 - Allow structurally validated independent Fail2ban nftables TCP input bans to coexist with UFW initialization, preserving IPv4/IPv6 address sets and existing bans.
 - Preview coexistence, verify ban structure after activation or rollback, tolerate dynamic ban/counter updates, and keep custom/unknown/iptables firewall rules guarded.

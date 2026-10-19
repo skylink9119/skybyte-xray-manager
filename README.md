@@ -28,7 +28,7 @@
 
 ---
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.8**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.9**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
 ## 三种节点
 
@@ -47,7 +47,7 @@
 需要 **root、Ubuntu/Debian 和 systemd**；二进制支持 amd64、arm64。在 VPS 的 root 终端执行完整命令：
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.8/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.9/install.sh)
 ```
 
 安装入口会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装后，重新登录 SSH 也可以输入下面的快捷命令：
@@ -93,7 +93,7 @@ bash install.sh
 
 ## 更新管理脚本
 
-菜单 **13** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 YES 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.8 安装命令更新一次，之后即可使用菜单 13。
+菜单 **13** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 YES 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.9 安装命令更新一次，之后即可使用菜单 13。
 
 下载固定仓库、指定版本的主脚本与 `SHA256SUMS`，核对 GitHub 发布附件的 SHA256 及清单，并检查 Bash 语法、版本和自检结果。通过后在同一目录原子替换，旧脚本保留为 `manager.previous.sh`；替换后自检失败时回退，若回退无法写入则明确报错并保留备份。拒绝未托管目录、异常文件或符号链接。网络/API 限额、附件缺失、校验错误和写入权限不足会停止更新；不会改写节点配置、UUID、密钥、语言、Xray 核心、服务、防火墙或 BBR 参数。
 
@@ -109,7 +109,7 @@ bash install.sh
 - **5**：停用/卸载 UFW。子菜单 **1** 仅停用，保留软件包与规则配置；**2** 卸载软件包并保留规则配置；**3** 卸载并清除 UFW 规则配置，清除后不可恢复。卸载前检查软件包状态、依赖与锁，经 YES 确认后停用并验证，再仅操作 `ufw` 软件包。第 3 项使用 `dpkg --purge ufw`，也可清理第 2 项留下的配置；未安装且无 dpkg 配置记录时不清理未知文件。软件包被保留、状态不完整或存在依赖冲突时停止；停用失败不继续卸载。清除失败会报告可能已部分删除，且不会自动重新启用。使用只读模拟预检，不强制依赖、不 autoremove、不连带移除其他包。其他防火墙、iptables/nftables 工具、云安全组、节点、SSH 和 BBR 配置不在清理范围内；不直接清空全局规则。停用 UFW 后，原先被阻止的端口可能可达。
 - **6 / 7 / 8**：查看 BBR 状态、启用 BBR 与 fq 默认参数、恢复启用前参数。只使用内核已有的 BBR（必要时尝试加载 `tcp_bbr` / `sch_fq` 模块），不安装或更换内核。原参数保存在本脚本独立文件 `/etc/sysctl.d/90-skybyte-xray-bbr.conf` 的注释中；拒绝覆盖其他内容或符号链接。重复启用保留最初记录，普通应用失败时尝试回退；回退未完成会保留文件并报错，可再次恢复。
 
-开发版增加 **Fail2ban 与 UFW 共存**：支持独立 `inet/f2b-table` 中的 `f2b-chain`（filter/input、优先级 -1、ACCEPT 默认策略），规则须只针对 TCP 端口和 IPv4/IPv6 封禁地址集合执行拒绝或丢弃。按完整结构验证，不能仅凭表名跳过检查；自定义跳转、放行、NAT、其他原生规则及 iptables 版 Fail2ban 仍须手动核对。确认前显示共存提示；启用或回退 UFW 后核对原有封禁结构保留，容许正常封禁地址与计数变化。未确认保留时报告检查 Fail2ban，并尝试停用 UFW；不会自动清空、停止或重建 Fail2ban。已有封禁仍可能阻止连接，启用后仍须测试新的 SSH 会话。
+支持 **Fail2ban 与 UFW 共存**：支持独立 `inet/f2b-table` 中的 `f2b-chain`（filter/input、优先级 -1、ACCEPT 默认策略），规则须只针对 TCP 端口和 IPv4/IPv6 封禁地址集合执行拒绝或丢弃。按完整结构验证，不能仅凭表名跳过检查；自定义跳转、放行、NAT、其他原生规则及 iptables 版 Fail2ban 仍须手动核对。确认前显示共存提示；启用或回退 UFW 后核对原有封禁结构保留，容许正常封禁地址与计数变化。未确认保留时报告检查 Fail2ban，并尝试停用 UFW；不会自动清空、停止或重建 Fail2ban。已有封禁仍可能阻止连接，启用后仍须测试新的 SSH 会话。
 
 BBR 修改的是系统 TCP 默认拥塞控制，主要作用于新连接，不能保证提速。`net.core.default_qdisc=fq` 是默认队列设置，不会直接替换已有网卡队列；其他系统启动配置可能覆盖这些值，重启后请再次查看状态。恢复操作还原启用前的运行时参数并移除本脚本文件，原有的其他 sysctl 文件保持不变。卸载管理器保留防火墙规则和 BBR 设置；需要恢复 BBR 时应先执行 **12 → 8**。
 
