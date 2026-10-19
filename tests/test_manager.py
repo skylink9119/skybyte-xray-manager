@@ -227,6 +227,7 @@ install_node
                 prepared = next(call for call in calls if call.startswith('prepare '))
                 self.assertIn('监听 TCP 端口 [443]' if language == 'zh' else 'TCP listen port [443]', result.stderr)
                 self.assertIn('preflight --port 443 ', calls[0])
+                self.assertIn('--kind '+('vision' if kind == '1' else 'xhttp-reality'), calls[0])
                 self.assertIn('--port 443 ', prepared)
                 self.assertIn('--sni '+host, prepared)
                 self.assertIn('--target '+host+':443', prepared)
@@ -287,6 +288,7 @@ install_node
         self.assertFalse(any(call.startswith('probe ') for call in calls))
         prepared = next(call for call in calls if call.startswith('prepare '))
         self.assertIn('--kind xhttp-tls', prepared)
+        self.assertIn('--kind xhttp-tls', calls[0])
         self.assertIn('--cert /cert.pem --key /key.pem', prepared)
 
 
@@ -312,6 +314,38 @@ class InstallationInputTests(TemporaryFixture):
         result = self.cli('--address', 'example.com', '--listen', '127.0.0.1', '--port', str(free_port()))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.root.exists())
+
+    def test_empty_destination_preflight_does_not_create_owner_marker(self):
+        self.root.mkdir()
+        result = self.cli('--kind', 'vision', '--address', 'example.com', '--listen', '127.0.0.1', '--port', str(free_port()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_existing_mode_is_rejected_on_another_free_port(self):
+        core.ensure_owned(self.root, True)
+        state = {'schema':1, 'nodes':{'vision':example_node()}}
+        core.write_private(self.root/'state.json', core.json_text(state))
+        number = free_port()
+        while number == state['nodes']['vision']['port']: number = free_port()
+        original = (self.root/'state.json').read_bytes()
+        result = self.cli('--kind', 'vision', '--address', 'example.com', '--listen', '127.0.0.1', '--port', str(number))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('该协议已安装', result.stderr)
+        self.assertIn('编辑节点', result.stderr)
+        self.assertEqual((self.root/'state.json').read_bytes(), original)
+        self.assertFalse(list(self.root.glob('.stage-*')))
+
+    def test_stopped_managed_port_conflict_is_rejected_without_mutation(self):
+        core.ensure_owned(self.root, True)
+        state = {'schema':1, 'nodes':{'vision':example_node()}}
+        core.write_private(self.root/'state.json', core.json_text(state))
+        original = (self.root/'state.json').read_bytes()
+        result = self.cli('--kind', 'xhttp-reality', '--address', 'example.com', '--listen', '127.0.0.1',
+                          '--port', str(state['nodes']['vision']['port']))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('托管节点端口冲突', result.stderr)
+        self.assertEqual((self.root/'state.json').read_bytes(), original)
+        self.assertFalse(list(self.root.glob('.stage-*')))
 
     def test_occupied_port_has_actionable_message(self):
         with socket.socket() as listener:

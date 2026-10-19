@@ -33,6 +33,19 @@ ask(){
 confirmed(){ [[ $1 =~ ^[Yy][Ee][Ss]$ ]]; }
 confirm(){ local answer; answer=$(ask "$1（输入 YES 确认；回车取消）：" "$2 (type YES to confirm; Enter to cancel): ") || return 1; confirmed "$answer"; }
 separator(){ printf '%s\n' '------------------------------------------------------------'; }
+show_banner(){
+ printf '%s\n============================================================\n' "$CYAN"
+ cat <<'LOGO'
+   ███████╗██╗  ██╗██╗   ██╗██████╗ ██╗   ██╗████████╗███████╗
+   ██╔════╝██║ ██╔╝╚██╗ ██╔╝██╔══██╗╚██╗ ██╔╝╚══██╔══╝██╔════╝
+   ███████╗█████╔╝  ╚████╔╝ ██████╔╝ ╚████╔╝    ██║   █████╗
+   ╚════██║██╔═██╗   ╚██╔╝  ██╔══██╗  ╚██╔╝     ██║   ██╔══╝
+   ███████║██║  ██╗   ██║   ██████╔╝   ██║      ██║   ███████╗
+   ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═════╝    ╚═╝      ╚═╝   ╚══════╝
+LOGO
+ printf '               SKYBYTE Xray Manager v%s\n                Reality · Vision · XHTTP\n' "$VERSION"
+ printf '============================================================%s\n' "$RESET"
+}
 
 helper(){ python3 - "$@" <<'SKYBYTE_PYTHON'
 # Copyright (C) 2026 SKYBYTE (skylink9119)
@@ -368,7 +381,18 @@ def check_port(host, number):
 def installation_preflight(options):
     address(options.address)
     name(options.name)
-    check_port(options.listen, port(options.port))
+    number = port(options.port)
+    root = checked_path(options.root)
+    # Inspect existing state without creating a directory or an ownership marker.
+    # An empty directory is also a valid destination for a first installation.
+    if root.exists() and (not root.is_dir() or any(root.iterdir())):
+        ensure_owned(root)
+        nodes = load_state(root)["nodes"]
+        if options.kind in nodes:
+            raise ValueError("Protocol already installed / 该协议已安装，请使用编辑节点功能；删除后重新安装会更换凭据")
+        if number in {node["port"] for node in nodes.values()}:
+            raise ValueError("TCP port already used by a managed node / 托管节点端口冲突，请选择其他空闲端口")
+    check_port(options.listen, number)
 
 
 def edit_state(state, kind, client_address=None, node_port=None, path=None):
@@ -1643,7 +1667,7 @@ install_node(){
   [[ $host =~ [^[:space:]] ]] && break
   warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
  done
- helper preflight --port "$node_port" --listen "$listen" --address "$host" --name "$node_name" || return 1
+ helper preflight --port "$node_port" --listen "$listen" --address "$host" --name "$node_name" --kind "$kind" || return 1
  if [[ $kind == xhttp-tls ]]; then
   sni=$(ask '证书域名 / TLS SNI：' 'Certificate domain / TLS SNI: ') || return 1
   cert=$(ask '已有可信 fullchain 证书文件绝对路径：' 'Absolute path to trusted fullchain certificate: ') || return 1
@@ -1807,13 +1831,16 @@ uninstall(){
  helper guard && lib_guard || return 1
  confirm '备份后卸载 SKYBYTE Xray Manager？' 'Back up and uninstall SKYBYTE Xray Manager?' || return 1
  make_backup || return 1
- systemctl stop skybyte-xray.service && systemctl disable skybyte-xray.service || return 1
+ if [[ -f $SKYBYTE_XRAY_UNIT ]]; then
+  systemctl stop skybyte-xray.service && systemctl disable skybyte-xray.service || return 1
+ fi
  python3 - "$SKYBYTE_XRAY_DIR" "$SKYBYTE_XRAY_UNIT" "$SKYBYTE_XRAY_LIB" "$SKYBYTE_XRAY_SHORTCUT" <<'PY'
 import json,sys
 from pathlib import Path
 root,unit,lib,shortcut=map(Path,sys.argv[1:])
-state=json.loads((root/'state.json').read_text())
-paths=[root/x for x in ['state.json','config.json','nodes.txt','subscription-base64.txt','language']]
+state_file=root/'state.json'
+state=json.loads(state_file.read_text()) if state_file.exists() else {'nodes':{}}
+paths=[root/x for x in ['state.json','config.json','nodes.txt','subscription-base64.txt','language']] if state_file.exists() else []
 for kind,node in state['nodes'].items():
  paths.append(root/('client-'+kind+'.json'))
  if kind=='xhttp-tls': paths.extend([root/node['cert'],root/node['key']])
@@ -2009,8 +2036,7 @@ update_manager(){
 }
 main_menu(){
  while :; do
-  printf '%s\n' '============================================================'
-  printf '%sSKYBYTE Xray Manager v%s%s\n' "$CYAN" "$VERSION" "$RESET"
+  show_banner
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
   menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n13. 更新管理脚本\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n13. Update manager script\n0. Exit'

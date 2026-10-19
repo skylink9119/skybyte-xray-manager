@@ -68,7 +68,7 @@ bash install.sh
 
 独立仓库：[skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager)。正式发布代码位于 `main`。发布页提供安装入口、自包含主脚本、完整源码包与 `SHA256SUMS`；完整包可直接本地安装，单独下载入口时会联网获取主脚本。
 
-首次启动选择语言。菜单和提问绿色加粗，节点信息黄色，链接和错误红色，警告黄色；非终端或 `NO_COLOR=1` 可关闭颜色。操作确认需要明确输入 YES，不区分大小写；回车取消。取消节点安装会正常返回菜单，不显示安装失败。
+首次启动选择语言。开发版主菜单使用与 sing-box 项目相同的 SKYBYTE ASCII Logo，并显示 Xray 项目名称。菜单和提问绿色加粗，节点信息黄色，链接和错误红色，警告黄色；非终端或 `NO_COLOR=1` 可关闭颜色。操作确认需要明确输入 YES，不区分大小写；回车取消。取消节点安装会正常返回菜单，不显示安装失败。
 
 安装时，“客户端连接地址”必填：填写这台 VPS 的公网 IP 或指向它的域名；它与 Reality 握手域名是两项不同的设置。带方括号的选项才可回车使用默认值。脚本会先检查地址与监听端口；若提示 TCP 443 已被占用（例如已有 sing-box 或网站），请选择其他空闲端口并放行对应 TCP 规则，不要直接停止已有服务。`TLSv1.3 / h2` 只表示握手目标检查通过，节点还需完成配置与服务启动。
 
@@ -185,6 +185,8 @@ XRAY_BIN=/absolute/path/to/verified/xray python3 -m unittest discover -s tests -
 本地使用已验证摘要的官方 Darwin/arm64 核心进行了配置检查与真实代理连接测试，涵盖 Vision、XHTTP-Reality、验证证书的 XHTTP-TLS 及 packet-up 源站模式。服务事务测试使用隔离的 systemctl 模拟器，**不能替代真实 systemd 开机测试**。packet-up 本地源站连接也不能代表已验证公网 CDN。
 
 GitHub Actions 覆盖 Ubuntu 24.04、Debian 12、Debian 13；本地测试通过与 Linux CI 结果分别记录，不能用前者代替后者。实际 VPS、云防火墙、CDN 和客户端 GUI 导入仍需在测试服务器验证。
+
+本轮代码检查、已修复问题及后续优化顺序见[项目检查记录](docs/REVIEW.md)。
 
 品牌：SKYBYTE Manager · [订阅 SKYBYTE YouTube 频道](https://www.youtube.com/@SKYBYTE9119)。
 

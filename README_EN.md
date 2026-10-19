@@ -180,6 +180,8 @@ Local validation uses the digest-verified official Darwin/arm64 core, including 
 
 Ubuntu 24.04, Debian 12 and Debian 13 GitHub Actions definitions are included. Local results and Linux CI results are reported separately. Real VPS boot, provider firewall, public CDN and GUI client imports still require validation.
 
+The development main menu reuses the sing-box project's SKYBYTE ASCII logo with the Xray project name, retaining terminal color and `NO_COLOR` behavior. See the [maintenance review](docs/REVIEW.md) (Chinese) for reproduced fixes and prioritized improvements.
+
 SKYBYTE Manager · [Subscribe to the SKYBYTE YouTube channel](https://www.youtube.com/@SKYBYTE9119).
 
 ## License

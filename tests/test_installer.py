@@ -97,6 +97,41 @@ shutil.copyfile(source,args[args.index('-o')+1])
         self.assertEqual(state.read_text(),'{"existing":"keep"}')
         self.assertEqual(notes.read_text(),'keep')
 
+    def test_reinstall_refuses_downgrade_before_replacing_files(self):
+        self.assertEqual(self.install().returncode, 0)
+        target = self.lib/'manager.sh'
+        newer = target.read_bytes().replace(b'\nVERSION=0.1.11\n', b'\nVERSION=0.99.0\n', 1)
+        target.write_bytes(newer)
+        shortcut = self.shortcut.read_bytes()
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('downgrade refused', result.stderr)
+        self.assertEqual(target.read_bytes(), newer)
+        self.assertEqual(self.shortcut.read_bytes(), shortcut)
+
+    def test_unknown_installed_version_is_not_overwritten(self):
+        self.assertEqual(self.install().returncode, 0)
+        target = self.lib/'manager.sh'
+        unknown = target.read_bytes().replace(b'\nVERSION=0.1.11\n', b'\nVERSION=development\n', 1)
+        target.write_bytes(unknown)
+        shortcut = self.shortcut.read_bytes()
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('version unknown', result.stderr)
+        self.assertEqual(target.read_bytes(), unknown)
+        self.assertEqual(self.shortcut.read_bytes(), shortcut)
+
+    def test_payload_requires_one_matching_version_before_installation(self):
+        payload = (PROJECT/'xray-manager.sh').read_bytes()
+        source = self.base/'candidate.sh'
+        for replacement in [b'\nVERSION=0.99.0\n', b'\n', b'\nVERSION=0.1.11\nVERSION=0.1.11\n']:
+            with self.subTest(replacement=replacement):
+                source.write_bytes(payload.replace(b'\nVERSION=0.1.11\n', replacement, 1))
+                result = self.shell('install_payload "$2" "$3" "$4"', source, self.lib, self.shortcut)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.lib.exists())
+                self.assertFalse(self.shortcut.exists())
+
     def test_foreign_library_preserved(self):
         self.lib.mkdir();foreign=self.lib/'config.json';foreign.write_text('keep')
         self.assertNotEqual(self.install().returncode,0)
@@ -127,5 +162,6 @@ shutil.copyfile(source,args[args.index('-o')+1])
         prefix='skybyte-xray-manager-v0.1.11/'
         self.assertIn(prefix+'LICENSE',names)
         self.assertIn(prefix+'tests/test_installer.py',names)
+        self.assertIn(prefix+'docs/REVIEW.md',names)
         self.assertTrue(all(name.startswith(prefix) for name in names))
         self.assertFalse(any('/work/' in name or name.endswith(('state.json','.pem','.key','.crt')) for name in names))

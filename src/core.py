@@ -331,7 +331,18 @@ def check_port(host, number):
 def installation_preflight(options):
     address(options.address)
     name(options.name)
-    check_port(options.listen, port(options.port))
+    number = port(options.port)
+    root = checked_path(options.root)
+    # Inspect existing state without creating a directory or an ownership marker.
+    # An empty directory is also a valid destination for a first installation.
+    if root.exists() and (not root.is_dir() or any(root.iterdir())):
+        ensure_owned(root)
+        nodes = load_state(root)["nodes"]
+        if options.kind in nodes:
+            raise ValueError("Protocol already installed / 该协议已安装，请使用编辑节点功能；删除后重新安装会更换凭据")
+        if number in {node["port"] for node in nodes.values()}:
+            raise ValueError("TCP port already used by a managed node / 托管节点端口冲突，请选择其他空闲端口")
+    check_port(options.listen, number)
 
 
 def edit_state(state, kind, client_address=None, node_port=None, path=None):

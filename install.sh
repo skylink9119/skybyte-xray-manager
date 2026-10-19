@@ -27,10 +27,10 @@ PY
 }
 
 install_payload(){
- python3 - "$1" "$2" "$3" <<'PY'
-import os,shlex,sys,tempfile
+ python3 - "$1" "$2" "$3" "$RELEASE_VERSION" <<'PY'
+import os,re,shlex,sys,tempfile
 from pathlib import Path
-source,directory,shortcut=map(Path,sys.argv[1:])
+source,directory,shortcut=map(Path,sys.argv[1:4])
 target=directory/'manager.sh'
 header='#!/usr/bin/env bash\n# SKYBYTE Xray Manager shortcut v1\n'
 for item in (source,directory,target,shortcut,*directory.parents,*shortcut.parents):
@@ -46,6 +46,15 @@ if shortcut.exists() and (not shortcut.is_file() or not shortcut.read_text().sta
 payload=source.read_bytes()
 if not payload.startswith(b'#!/usr/bin/env bash\n# SKYBYTE Xray Manager standalone;'):
     raise SystemExit('Invalid SKYBYTE Manager payload')
+def manager_version(data):
+    versions=re.findall(rb'^VERSION=([0-9]+\.[0-9]+\.[0-9]+)$',data,re.MULTILINE)
+    if len(versions)!=1: raise SystemExit('Manager version unknown / 无法识别管理脚本版本，未覆盖文件')
+    return tuple(map(int,versions[0].split(b'.')))
+incoming=manager_version(payload)
+if incoming!=tuple(map(int,sys.argv[4].split('.'))):
+    raise SystemExit('Installer/payload version mismatch / 安装入口与主脚本版本不一致')
+if target.exists() and manager_version(target.read_bytes())>incoming:
+    raise SystemExit('Manager downgrade refused / 已安装的管理脚本版本较新，拒绝降级；请使用最新安装入口或菜单 13')
 directory.mkdir(parents=True,exist_ok=True,mode=0o700)
 os.chmod(directory,0o700)
 shortcut.parent.mkdir(parents=True,exist_ok=True,mode=0o755)

@@ -9,7 +9,7 @@ import tarfile
 
 root=Path(__file__).resolve().parents[1]
 subprocess.run(['python3',str(root/'scripts/build.py'),'--check'],check=True)
-files=['install.sh','xray-manager.sh','README.md','README_EN.md','CHANGELOG.md','LICENSE','.gitignore',
+files=['install.sh','xray-manager.sh','README.md','README_EN.md','CHANGELOG.md','LICENSE','.gitignore','docs/REVIEW.md',
        'src/manager.sh','src/core.py','scripts/build.py','scripts/package.py','scripts/check_firewall_namespace.py',
        'tests/test_updater.py','tests/test_network.py','tests/test_fail2ban.py','tests/test_manager.py','tests/test_services.py','tests/test_installer.py','.github/workflows/test.yml']
 folder=root/'dist';folder.mkdir(exist_ok=True)
