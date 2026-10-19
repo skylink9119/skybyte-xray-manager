@@ -690,6 +690,78 @@ def firewall_allow(numbers, zone=""):
     return "firewalld / " + zone
 
 
+def firewall_setup_check():
+    status = firewall_status()
+    if status["firewalld"] == "active" or status["ufw"] == "active":
+        raise ValueError("A firewall is already active; use the port allow menu / 已有防火墙启用，请使用端口放行菜单，不重复初始化")
+    # Do not replace rules belonging to Docker, native nftables or other managers.
+    for command in ("nft", "iptables-save", "ip6tables-save", "iptables-legacy-save", "ip6tables-legacy-save"):
+        if not shutil.which(command):
+            continue
+        args = [command, "list", "ruleset"] if command == "nft" else [command]
+        try:
+            rules = system_command(args).stdout
+        except (OSError, subprocess.SubprocessError):
+            raise ValueError("Cannot inspect " + command + "; UFW setup stopped / 无法检查 " + command + "，已停止 UFW 初始化，请检查权限与内核支持") from None
+        if command == "nft":
+            custom = bool(rules.strip())
+        else:
+            custom = any(line.startswith("-A ") or (line.startswith(":") and line.split()[1] != "ACCEPT")
+                         for line in rules.splitlines())
+        if custom:
+            raise ValueError("Existing netfilter rules detected; configure the firewall manually / 检测到已有 netfilter 规则（可能属于 Docker 或其他防火墙），请手动配置，不覆盖")
+
+
+def firewall_setup_plan(root, ssh_ports, extra_ports):
+    ssh = {port(number) for number in ssh_ports}
+    if not ssh:
+        raise ValueError("Confirm at least one SSH TCP port / 必须确认至少一个 SSH TCP 端口")
+    connection = os.environ.get("SSH_CONNECTION", "")
+    if connection:
+        fields = connection.split()
+        if len(fields) != 4:
+            raise ValueError("Cannot identify current SSH port / 无法识别当前 SSH 连接端口")
+        ipaddress.ip_address(fields[0]); ipaddress.ip_address(fields[2])
+        ssh.add(port(fields[3]))
+    nodes = set()
+    root = checked_path(root)
+    if root.exists():
+        ensure_owned(root)
+        nodes = {node["port"] for node in load_state(root)["nodes"].values()}
+    return sorted(ssh), sorted((nodes | {port(number) for number in extra_ports}) - ssh)
+
+
+def firewall_setup(root, ssh_ports, extra_ports, config=Path("/etc/default/ufw")):
+    ssh, others = firewall_setup_plan(root, ssh_ports, extra_ports)
+    firewall_setup_check()
+    if not shutil.which("ufw"):
+        raise ValueError("Install UFW first / 请先安装 UFW")
+    text = checked_path(config).read_text()
+    values = re.findall(r'^\s*IPV6=["\']?(yes|no)["\']?\s*$', text, re.MULTILINE)
+    if values != ["yes"]:
+        raise ValueError("UFW requires IPV6=yes; inspect /etc/default/ufw / 请先核对 /etc/default/ufw 并设置 IPV6=yes，避免遗漏 IPv6 防护")
+    added = system_command(["ufw", "show", "added"]).stdout
+    if re.search(r'^ufw\s+(?:deny|reject|limit|route|insert|prepend)\b', added, re.MULTILINE):
+        raise ValueError("Existing restrictive UFW rules require manual review / 已有拒绝、限速或路由 UFW 规则，请手动核对后启用")
+    # Stage SSH allows first while inactive; never assume SSH uses port 22.
+    for number in ssh + others:
+        system_command(["ufw", "insert", "1", "allow", "in", "proto", "tcp", "to", "any", "port", str(number)])
+    system_command(["ufw", "default", "deny", "incoming"])
+    system_command(["ufw", "default", "allow", "outgoing"])
+    try:
+        system_command(["ufw", "--force", "enable"])
+        if firewall_status()["ufw"] != "active":
+            raise ValueError("UFW did not become active / UFW 未成功启用")
+    except BaseException as error:
+        try:
+            system_command(["ufw", "--force", "disable"])
+            if firewall_status()["ufw"] != "inactive":
+                raise ValueError("UFW still active")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise ValueError("UFW enable/rollback incomplete; check from provider console / UFW 启用或回退未完成，请通过服务商控制台检查；已保留规则") from error
+        raise
+
+
 BBR_VALUES = {"net.core.default_qdisc": "fq", "net.ipv4.tcp_congestion_control": "bbr"}
 BBR_MARK = "# SKYBYTE Xray Manager BBR v1\n"
 BBR_PATH = Path("/etc/sysctl.d/90-skybyte-xray-bbr.conf")
@@ -898,7 +970,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update"])
+                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -924,11 +996,23 @@ def main():
     parser.add_argument("--ports", nargs="+", default=[])
     parser.add_argument("--zone", default="")
     parser.add_argument("--release", default="")
+    parser.add_argument("--ssh-ports", nargs="+", default=[])
     options = parser.parse_args()
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
         options.address = options.address if options.address is not None else ""
         options.path = options.path if options.path is not None else ""
+    if options.command == "firewall-setup-check":
+        firewall_setup_check()
+        return
+    if options.command == "firewall-setup-plan":
+        ssh, others = firewall_setup_plan(Path(options.root), options.ssh_ports, options.ports)
+        print("SSH TCP: " + ", ".join(map(str, ssh)))
+        print("Other TCP / 其他 TCP: " + (", ".join(map(str, others)) or "none / 无"))
+        return
+    if options.command == "firewall-setup":
+        firewall_setup(Path(options.root), options.ssh_ports, options.ports)
+        return
     if options.command == "manager-latest":
         tag = manager_release()["tag_name"]
         if manager_version(tag) > manager_version("v" + VERSION):

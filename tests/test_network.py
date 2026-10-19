@@ -217,3 +217,149 @@ class NetworkMenuTests(TemporaryFixture):
         self.assertIn('TCP '+str(state['nodes']['vision']['port']), result.stdout)
         for field in ['uuid', 'private', 'public', 'short_id']:
             self.assertNotIn(state['nodes']['vision'][field], result.stdout)
+
+
+class FirewallSetupTests(TemporaryFixture):
+    def setUp(self):
+        super().setUp()
+        self.config = self.base/'ufw-defaults'; self.config.write_text('IPV6=yes\n')
+        self.commands = []; self.active = False; self.firewalld = False
+        self.raw = False; self.fail_allow = False; self.fail_enable = False; self.fail_disable = False
+        self.added = ''; self.ufw_installed = True
+        patch = mock.patch.dict(os.environ, {'SSH_CONNECTION':''}); patch.start(); self.addCleanup(patch.stop)
+        patch = mock.patch.object(core.shutil, 'which', side_effect=lambda name:
+            '/mock/'+name if name in ('nft', 'iptables-save', 'firewall-cmd') or (name == 'ufw' and self.ufw_installed) else None)
+        patch.start(); self.addCleanup(patch.stop)
+        patch = mock.patch.object(core, 'system_command', side_effect=self.command)
+        patch.start(); self.addCleanup(patch.stop)
+
+    def command(self, args, check=True):
+        self.commands.append(args)
+        code, output = 0, ''
+        if args == ['ufw', 'status']: output = 'Status: active\n' if self.active else 'Status: inactive\n'
+        elif args == ['firewall-cmd', '--state']: code, output = (0, 'running') if self.firewalld else (252, 'not running')
+        elif args == ['nft', 'list', 'ruleset']: output = 'table inet custom {}' if self.raw else ''
+        elif args == ['iptables-save']: output = '*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n'
+        elif args == ['ufw', 'show', 'added']: output = self.added
+        elif args[:3] == ['ufw', 'insert', '1']:
+            if self.fail_allow: code = 1
+        elif args[:2] == ['ufw', 'default']: pass
+        elif args == ['ufw', '--force', 'enable']:
+            self.active = True
+            if self.fail_enable: code = 1
+        elif args == ['ufw', '--force', 'disable']:
+            if self.fail_disable: code = 1
+            else: self.active = False
+        else: raise AssertionError(args)
+        if check and code: raise subprocess.CalledProcessError(code, args)
+        return subprocess.CompletedProcess(args, code, stdout=output, stderr='')
+
+    def test_ssh_and_node_ports_staged_before_enable(self):
+        core.ensure_owned(self.root, True)
+        node = example_node(); node['port'] = 8443
+        core.write_private(self.root/'state.json', core.json_text({'schema':1, 'nodes':{'vision':node}}))
+        with mock.patch.dict(os.environ, {'SSH_CONNECTION':'203.0.113.1 50000 203.0.113.2 2222'}):
+            core.firewall_setup(self.root, ['22'], ['80', '443'], self.config)
+        allows = [a for a in self.commands if a[:3] == ['ufw','insert','1']]
+        self.assertEqual([a[-1] for a in allows], ['22', '2222', '80', '443', '8443'])
+        enable_index = self.commands.index(['ufw','--force','enable'])
+        self.assertTrue(all(self.commands.index(a) < enable_index for a in allows))
+        self.assertIn(['ufw','default','deny','incoming'], self.commands)
+        self.assertIn(['ufw','default','allow','outgoing'], self.commands)
+        self.assertTrue(self.active)
+        self.assertEqual(core.load_state(self.root)['nodes']['vision'], node)
+
+    def test_existing_firewall_or_native_rules_refused(self):
+        for kind in ['ufw','firewalld','raw']:
+            self.active = kind == 'ufw'; self.firewalld = kind == 'firewalld'; self.raw = kind == 'raw'
+            self.commands.clear()
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                core.firewall_setup(self.root, ['2222'], [], self.config)
+            self.assertFalse(any(a[:2] in (['ufw','insert'], ['ufw','default'], ['ufw','--force']) for a in self.commands))
+
+    def test_unreadable_kernel_rules_never_attempts_activation(self):
+        command = self.command
+        def denied(args, check=True):
+            if args == ['nft','list','ruleset']:
+                raise subprocess.CalledProcessError(1, args)
+            return command(args, check)
+        with mock.patch.object(core, 'system_command', side_effect=denied):
+            with self.assertRaisesRegex(ValueError, '已停止'):
+                core.firewall_setup(self.root, ['2222'], [], self.config)
+        self.assertFalse(self.active)
+        self.assertNotIn(['ufw','--force','enable'], self.commands)
+
+    def test_ipv6_disabled_and_restrictive_stored_rules_refused(self):
+        for config, added in [('IPV6=no\n',''), ('IPV6=yes\nIPV6=no\n',''), ('IPV6=yes\n','ufw deny 2222/tcp\n')]:
+            self.config.write_text(config); self.added = added
+            with self.subTest(config=config, added=added), self.assertRaises(ValueError):
+                core.firewall_setup(self.root, ['2222'], [], self.config)
+        self.assertFalse(self.active)
+        self.assertNotIn(['ufw','--force','enable'], self.commands)
+
+    def test_missing_invalid_ssh_or_malformed_connection_refused(self):
+        for ssh in [[], ['0'], ['22;id']]:
+            with self.subTest(ssh=ssh), self.assertRaises(ValueError): core.firewall_setup(self.root, ssh, [], self.config)
+        with mock.patch.dict(os.environ, {'SSH_CONNECTION':'malformed'}):
+            with self.assertRaises(ValueError): core.firewall_setup(self.root, ['22'], [], self.config)
+        self.assertFalse(self.commands)
+
+    def test_rule_failure_never_enables_firewall(self):
+        self.fail_allow = True
+        with self.assertRaises(subprocess.CalledProcessError): core.firewall_setup(self.root, ['2222'], [], self.config)
+        self.assertFalse(self.active)
+        self.assertNotIn(['ufw','--force','enable'], self.commands)
+
+    def test_failed_enable_rolls_back_to_inactive(self):
+        self.fail_enable = True
+        with self.assertRaises(subprocess.CalledProcessError): core.firewall_setup(self.root, ['2222'], [], self.config)
+        self.assertFalse(self.active)
+        self.assertIn(['ufw','--force','disable'], self.commands)
+
+    def test_failed_disable_reports_console_recovery(self):
+        self.fail_enable = True; self.fail_disable = True
+        with self.assertRaisesRegex(ValueError, '控制台'): core.firewall_setup(self.root, ['2222'], [], self.config)
+        self.assertTrue(self.active)
+
+    def test_missing_ufw_never_attempts_enable(self):
+        self.ufw_installed = False
+        with self.assertRaisesRegex(ValueError, '先安装'): core.firewall_setup(self.root, ['22'], [], self.config)
+        self.assertNotIn(['ufw','--force','enable'], self.commands)
+
+
+class FirewallInstallMenuTests(TemporaryFixture):
+    def shell(self, inputs, apt_fail=False, language='zh'):
+        log = self.base/'log'
+        script = '''source "$1"
+helper(){ printf '%s\\n' "$*" >> "$SETUP_LOG"; }
+command(){ if [[ $1 == -v && $2 == ufw ]]; then return 1; fi; builtin command "$@"; }
+apt_refresh(){ printf 'apt-refresh\\n' >> "$SETUP_LOG"; }
+apt-get(){ printf '%s\\n' "apt-get $*" >> "$SETUP_LOG"; [[ $APT_FAIL == no ]]; }
+LANGUAGE="$2"
+if network_menu; then exit 0; else exit 1; fi
+'''
+        result = subprocess.run(['bash','-c',script,'test',str(PROJECT/'xray-manager.sh'),language],
+            input=inputs,text=True,capture_output=True,env={**os.environ,'SSH_CONNECTION':'203.0.113.1 50000 203.0.113.2 2222',
+            'SETUP_LOG':str(log),'APT_FAIL':'yes' if apt_fail else 'no'})
+        calls = log.read_text().splitlines() if log.exists() else []
+        if log.exists(): log.unlink()
+        return result, calls
+
+    def test_install_then_enable_after_confirmation_in_both_languages(self):
+        for language in ['zh','en']:
+            result, calls = self.shell('7\n\n80 443\nYES\n', language=language)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('apt-get install -y ufw', calls)
+            setup = 'firewall-setup --ssh-ports 2222 --ports 80 443'
+            self.assertIn(setup, calls)
+            self.assertLess(calls.index('apt-get install -y ufw'), calls.index(setup))
+
+    def test_cancellation_does_not_install_or_enable(self):
+        result, calls = self.shell('7\n\n\nno\n')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse(any(c.startswith('apt-') or c.startswith('firewall-setup --') for c in calls))
+
+    def test_failed_package_install_does_not_enable(self):
+        result, calls = self.shell('7\n\n\nYES\n', apt_fail=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertFalse(any(c.startswith('firewall-setup --') for c in calls))

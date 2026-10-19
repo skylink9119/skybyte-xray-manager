@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add menu 12 → 7 to install missing UFW via APT and explicitly initialize/enable it after previewing confirmed SSH, current SSH session, node and extra TCP ports.
+- Stage allow rules before applying deny-incoming/allow-outgoing defaults and activation. Refuse active firewalls, existing netfilter rules, restrictive stored UFW rules and unsafe IPv6 configuration.
+- Attempt to disable a failed initial activation, report console recovery if rollback fails, and retain package/configuration for inspection. Add isolated activation-order, cancellation, package failure and SSH regressions.
+
 ## 0.1.4 — 2026-10-19
 
 - Add menu 13 for stable-release manager updates with version preview, explicit confirmation, pinned repository/tag, release-asset and manifest SHA256 verification, syntax/version/self-check validation and atomic replacement.
