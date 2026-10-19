@@ -13,10 +13,10 @@ files=['install.sh','xray-manager.sh','README.md','README_EN.md','CHANGELOG.md',
        'src/manager.sh','src/core.py','scripts/build.py','scripts/package.py',
        'tests/test_updater.py','tests/test_network.py','tests/test_manager.py','tests/test_services.py','tests/test_installer.py','.github/workflows/test.yml']
 folder=root/'dist';folder.mkdir(exist_ok=True)
-output=folder/'SKYBYTE-Xray-Manager-v0.1.6.tar.gz'
+output=folder/'SKYBYTE-Xray-Manager-v0.1.7.tar.gz'
 with tarfile.open(output,'w:gz') as archive:
     for relative in files:
-        archive.add(root/relative,arcname='skybyte-xray-manager-v0.1.6/'+relative,recursive=False)
+        archive.add(root/relative,arcname='skybyte-xray-manager-v0.1.7/'+relative,recursive=False)
 for name in ['install.sh','xray-manager.sh']:
     (folder/name).write_bytes((root/name).read_bytes())
     (folder/name).chmod(0o755)

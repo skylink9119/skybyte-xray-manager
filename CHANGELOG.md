@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.7 — 2026-10-19
 
 - Add menu 12 → 8 for disabling UFW or removing only its package while retaining rule configuration, with targeted warnings and explicit confirmation.
 - Check package state/dependencies before disabling, verify inactivity before removal, refuse forced dependency changes, and report partial removal failures without automatic re-enable.
