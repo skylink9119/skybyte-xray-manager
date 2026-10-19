@@ -28,7 +28,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -634,10 +634,32 @@ def system_command(arguments, check=True):
                           timeout=30, env={**os.environ, "LC_ALL": "C"})
 
 
+def ufw_command(arguments, check=True):
+    try:
+        return system_command(["ufw", *arguments], check=check)
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "") + (error.stdout or "")
+        reason = "check UFW diagnostics / 请检查 UFW 诊断输出"
+        for token, label in [("Invalid position", "empty-rule position is invalid / 空规则列表位置无效"),
+                             ("Permission denied", "permission/kernel capability denied / 权限或内核能力不足"),
+                             ("Could not load logging rules", "logging rules could not load / 日志规则加载失败"),
+                             ("iptables", "iptables backend failed / iptables 后端失败")]:
+            if token in detail:
+                reason = label
+                break
+        command = "ufw " + " ".join(arguments)
+        raise ValueError("UFW step failed: " + command + " (exit " + str(error.returncode) + "); " + reason +
+                         " / UFW 操作失败，具体命令如上；未显示外部异常中的敏感内容") from None
+    except subprocess.TimeoutExpired:
+        raise ValueError("UFW command timed out / UFW 命令超时: ufw " + " ".join(arguments)) from None
+    except FileNotFoundError:
+        raise ValueError("UFW executable missing; check package/PATH / 找不到 UFW 可执行文件，请检查安装与 PATH") from None
+
+
 def firewall_status():
     status = {"ufw": "unavailable", "firewalld": "unavailable"}
     if shutil.which("ufw"):
-        result = system_command(["ufw", "status"])
+        result = ufw_command(["status"])
         if result.stdout.startswith("Status: active"):
             status["ufw"] = "active"
         elif result.stdout.startswith("Status: inactive"):
@@ -667,7 +689,7 @@ def firewall_allow(numbers, zone=""):
         raise ValueError("Exactly one active UFW/firewalld is required; configure your firewall first / 需要仅有一个已启用的 UFW/firewalld，请先配置防火墙；未修改规则")
     if active[0] == "ufw":
         for number in numbers:
-            system_command(["ufw", "allow", "in", "proto", "tcp", "to", "any", "port", str(number)])
+            ufw_command(["allow", "in", "proto", "tcp", "to", "any", "port", str(number)])
         return "UFW"
     if not zone:
         zone = system_command(["firewall-cmd", "--get-default-zone"]).stdout.strip()
@@ -690,6 +712,64 @@ def firewall_allow(numbers, zone=""):
     return "firewalld / " + zone
 
 
+def netfilter_label(value):
+    # Kernel object names can contain control characters; never emit them verbatim.
+    return re.sub(r"[^A-Za-z0-9_.:-]", "?", str(value))[:64]
+
+
+def nft_conflict(text):
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise ValueError("Cannot parse nft JSON; UFW setup stopped / 无法解析 nft JSON，已停止 UFW 初始化") from None
+    if not isinstance(data, dict) or not isinstance(data.get("nftables"), list):
+        raise ValueError("Unknown nft JSON structure / 无法识别 nft JSON 结构")
+    for item in data["nftables"]:
+        if not isinstance(item, dict) or len(item) != 1:
+            raise ValueError("Unknown nft object / 无法识别 nft 对象")
+        kind, value = next(iter(item.items()))
+        if kind == "metainfo":
+            continue
+        if not isinstance(value, dict):
+            raise ValueError("Unknown nft object fields / 无法识别 nft 对象字段")
+        location = "/".join(netfilter_label(value.get(field, "?")) for field in ("family", "table", "chain" if kind == "rule" else "name"))
+        if kind == "table":
+            if not all(isinstance(value.get(field), str) for field in ("family", "name")):
+                raise ValueError("Invalid nft table / nft 表信息异常")
+            continue
+        if kind == "chain":
+            if not all(isinstance(value.get(field), str) for field in ("family", "table", "name")):
+                raise ValueError("Invalid nft chain / nft 链信息异常")
+            if "hook" in value or "policy" in value:
+                if value.get("policy") != "accept":
+                    return "chain " + location + " policy=" + netfilter_label(value.get("policy", "unknown"))
+            continue
+        # Rules (including ACCEPT/NAT), sets, flowtables and unknown state remain guarded.
+        return netfilter_label(kind) + " " + location
+    return None
+
+
+def iptables_conflict(text):
+    table = "?"
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line == "COMMIT":
+            continue
+        if line.startswith("*"):
+            table = netfilter_label(line[1:])
+            continue
+        fields = line.split()
+        if line.startswith(":") and len(fields) == 3 and fields[1] in ("ACCEPT", "-") and re.fullmatch(r"\[[0-9]+:[0-9]+\]", fields[2]):
+            # With no rules anywhere, an unreferenced empty user chain has no effect.
+            continue
+        if line.startswith(":"):
+            return table + "/" + netfilter_label(fields[0][1:]) + " policy=" + netfilter_label(fields[1] if len(fields) > 1 else "unknown")
+        if line.startswith("-A ") and len(fields) >= 2:
+            return "rule " + table + "/" + netfilter_label(fields[1])
+        return "unrecognized entry / 无法识别条目 " + table
+    return None
+
+
 def firewall_setup_check():
     status = firewall_status()
     if status["firewalld"] == "active" or status["ufw"] == "active":
@@ -698,18 +778,15 @@ def firewall_setup_check():
     for command in ("nft", "iptables-save", "ip6tables-save", "iptables-legacy-save", "ip6tables-legacy-save"):
         if not shutil.which(command):
             continue
-        args = [command, "list", "ruleset"] if command == "nft" else [command]
+        args = [command, "-j", "list", "ruleset"] if command == "nft" else [command]
         try:
             rules = system_command(args).stdout
         except (OSError, subprocess.SubprocessError):
             raise ValueError("Cannot inspect " + command + "; UFW setup stopped / 无法检查 " + command + "，已停止 UFW 初始化，请检查权限与内核支持") from None
-        if command == "nft":
-            custom = bool(rules.strip())
-        else:
-            custom = any(line.startswith("-A ") or (line.startswith(":") and line.split()[1] != "ACCEPT")
-                         for line in rules.splitlines())
-        if custom:
-            raise ValueError("Existing netfilter rules detected; configure the firewall manually / 检测到已有 netfilter 规则（可能属于 Docker 或其他防火墙），请手动配置，不覆盖")
+        conflict = nft_conflict(rules) if command == "nft" else iptables_conflict(rules)
+        if conflict:
+            raise ValueError("Existing netfilter state: " + command + " / " + conflict +
+                             "; inspect it before enabling UFW / 检测到已有规则或策略，来源如上；请先核对，不自动清空或覆盖")
 
 
 def firewall_setup_plan(root, ssh_ports, extra_ports):
@@ -740,21 +817,21 @@ def firewall_setup(root, ssh_ports, extra_ports, config=Path("/etc/default/ufw")
     values = re.findall(r'^\s*IPV6=["\']?(yes|no)["\']?\s*$', text, re.MULTILINE)
     if values != ["yes"]:
         raise ValueError("UFW requires IPV6=yes; inspect /etc/default/ufw / 请先核对 /etc/default/ufw 并设置 IPV6=yes，避免遗漏 IPv6 防护")
-    added = system_command(["ufw", "show", "added"]).stdout
+    added = ufw_command(["show", "added"]).stdout
     if re.search(r'^ufw\s+(?:deny|reject|limit|route|insert|prepend)\b', added, re.MULTILINE):
         raise ValueError("Existing restrictive UFW rules require manual review / 已有拒绝、限速或路由 UFW 规则，请手动核对后启用")
     # Stage SSH allows first while inactive; never assume SSH uses port 22.
     for number in ssh + others:
-        system_command(["ufw", "insert", "1", "allow", "in", "proto", "tcp", "to", "any", "port", str(number)])
-    system_command(["ufw", "default", "deny", "incoming"])
-    system_command(["ufw", "default", "allow", "outgoing"])
+        ufw_command(["prepend", "allow", "in", "proto", "tcp", "to", "any", "port", str(number)])
+    ufw_command(["default", "deny", "incoming"])
+    ufw_command(["default", "allow", "outgoing"])
     try:
-        system_command(["ufw", "--force", "enable"])
+        ufw_command(["--force", "enable"])
         if firewall_status()["ufw"] != "active":
             raise ValueError("UFW did not become active / UFW 未成功启用")
     except BaseException as error:
         try:
-            system_command(["ufw", "--force", "disable"])
+            ufw_command(["--force", "disable"])
             if firewall_status()["ufw"] != "inactive":
                 raise ValueError("UFW still active")
         except (OSError, ValueError, subprocess.SubprocessError):
@@ -1038,7 +1115,7 @@ def main():
             print("Default zone / 默认区域: " + system_command(["firewall-cmd", "--get-default-zone"]).stdout.strip())
             print(system_command(["firewall-cmd", "--get-active-zones"]).stdout.strip())
         if shutil.which("ufw"):
-            print(system_command(["ufw", "status", "verbose"]).stdout.strip())
+            print(ufw_command(["status", "verbose"]).stdout.strip())
         return
     if options.command == "firewall-allow":
         numbers = options.ports

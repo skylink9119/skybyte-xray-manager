@@ -21,7 +21,7 @@ jobs:
       - name: Install tools
         run: |
           apt-get update
-          apt-get install -y bash python3 openssl ca-certificates shellcheck curl
+          apt-get install -y bash python3 openssl ca-certificates shellcheck curl ufw
       - uses: actions/checkout@v4
       - name: Syntax and static checks
         run: |

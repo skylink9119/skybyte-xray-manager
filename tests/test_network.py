@@ -238,10 +238,10 @@ class FirewallSetupTests(TemporaryFixture):
         code, output = 0, ''
         if args == ['ufw', 'status']: output = 'Status: active\n' if self.active else 'Status: inactive\n'
         elif args == ['firewall-cmd', '--state']: code, output = (0, 'running') if self.firewalld else (252, 'not running')
-        elif args == ['nft', 'list', 'ruleset']: output = 'table inet custom {}' if self.raw else ''
+        elif args == ['nft', '-j', 'list', 'ruleset']: output = json.dumps({'nftables':[{'rule':{'family':'inet','table':'custom','chain':'input','expr':[{'accept':None}]}}] if self.raw else []})
         elif args == ['iptables-save']: output = '*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n'
         elif args == ['ufw', 'show', 'added']: output = self.added
-        elif args[:3] == ['ufw', 'insert', '1']:
+        elif args[:3] == ['ufw', 'prepend', 'allow']:
             if self.fail_allow: code = 1
         elif args[:2] == ['ufw', 'default']: pass
         elif args == ['ufw', '--force', 'enable']:
@@ -260,7 +260,7 @@ class FirewallSetupTests(TemporaryFixture):
         core.write_private(self.root/'state.json', core.json_text({'schema':1, 'nodes':{'vision':node}}))
         with mock.patch.dict(os.environ, {'SSH_CONNECTION':'203.0.113.1 50000 203.0.113.2 2222'}):
             core.firewall_setup(self.root, ['22'], ['80', '443'], self.config)
-        allows = [a for a in self.commands if a[:3] == ['ufw','insert','1']]
+        allows = [a for a in self.commands if a[:3] == ['ufw','prepend','allow']]
         self.assertEqual([a[-1] for a in allows], ['22', '2222', '80', '443', '8443'])
         enable_index = self.commands.index(['ufw','--force','enable'])
         self.assertTrue(all(self.commands.index(a) < enable_index for a in allows))
@@ -275,12 +275,12 @@ class FirewallSetupTests(TemporaryFixture):
             self.commands.clear()
             with self.subTest(kind=kind), self.assertRaises(ValueError):
                 core.firewall_setup(self.root, ['2222'], [], self.config)
-            self.assertFalse(any(a[:2] in (['ufw','insert'], ['ufw','default'], ['ufw','--force']) for a in self.commands))
+            self.assertFalse(any(a[:2] in (['ufw','prepend'], ['ufw','default'], ['ufw','--force']) for a in self.commands))
 
     def test_unreadable_kernel_rules_never_attempts_activation(self):
         command = self.command
         def denied(args, check=True):
-            if args == ['nft','list','ruleset']:
+            if args == ['nft','-j','list','ruleset']:
                 raise subprocess.CalledProcessError(1, args)
             return command(args, check)
         with mock.patch.object(core, 'system_command', side_effect=denied):
@@ -306,13 +306,13 @@ class FirewallSetupTests(TemporaryFixture):
 
     def test_rule_failure_never_enables_firewall(self):
         self.fail_allow = True
-        with self.assertRaises(subprocess.CalledProcessError): core.firewall_setup(self.root, ['2222'], [], self.config)
+        with self.assertRaises(ValueError): core.firewall_setup(self.root, ['2222'], [], self.config)
         self.assertFalse(self.active)
         self.assertNotIn(['ufw','--force','enable'], self.commands)
 
     def test_failed_enable_rolls_back_to_inactive(self):
         self.fail_enable = True
-        with self.assertRaises(subprocess.CalledProcessError): core.firewall_setup(self.root, ['2222'], [], self.config)
+        with self.assertRaises(ValueError): core.firewall_setup(self.root, ['2222'], [], self.config)
         self.assertFalse(self.active)
         self.assertIn(['ufw','--force','disable'], self.commands)
 
@@ -363,3 +363,133 @@ if network_menu; then exit 0; else exit 1; fi
         result, calls = self.shell('7\n\n\nYES\n', apt_fail=True)
         self.assertNotEqual(result.returncode,0)
         self.assertFalse(any(c.startswith('firewall-setup --') for c in calls))
+
+
+class NetfilterInspectionTests(unittest.TestCase):
+    def test_empty_tables_and_accept_chains_are_not_firewall_rules(self):
+        entries = [{'metainfo':{'json_schema_version':1}}, {'table':{'family':'ip','name':'filter'}},
+                   {'chain':{'family':'ip','table':'filter','name':'INPUT','type':'filter','hook':'input','prio':0,'policy':'accept'}},
+                   {'chain':{'family':'ip','table':'filter','name':'unused'}}]
+        self.assertIsNone(core.nft_conflict(json.dumps({'nftables':entries})))
+        self.assertIsNone(core.iptables_conflict('# Generated\n*filter\n:INPUT ACCEPT [2:10]\n:unused - [0:0]\nCOMMIT\n'))
+
+    def test_active_accept_nat_rules_and_drop_policy_are_still_guarded(self):
+        for expr in [[{'accept':None}], [{'masquerade':None}]]:
+            state = {'nftables':[{'rule':{'family':'ip','table':'nat','chain':'POSTROUTING','expr':expr}}]}
+            self.assertIn('rule ip/nat/POSTROUTING', core.nft_conflict(json.dumps(state)))
+        state = {'nftables':[{'chain':{'family':'inet','table':'filter','name':'input','hook':'input','policy':'drop'}}]}
+        self.assertIn('policy=drop', core.nft_conflict(json.dumps(state)))
+        self.assertIn('policy=DROP', core.iptables_conflict('*filter\n:INPUT DROP [0:0]\nCOMMIT'))
+        self.assertIn('rule nat/POSTROUTING', core.iptables_conflict('*nat\n:POSTROUTING ACCEPT [0:0]\n-A POSTROUTING -j MASQUERADE\nCOMMIT'))
+
+    def test_unknown_objects_and_unparseable_output_do_not_pass(self):
+        for text in ['', 'table inet filter {}', '{}', '{"nftables":null}', '{"nftables":[null]}']:
+            with self.subTest(text=text), self.assertRaises(ValueError): core.nft_conflict(text)
+        self.assertIsNotNone(core.nft_conflict('{"nftables":[{"set":{"family":"ip","table":"x","name":"x"}}]}'))
+        self.assertIsNotNone(core.iptables_conflict('*filter\n:INPUT\nCOMMIT'))
+        self.assertIsNotNone(core.iptables_conflict('unknown output'))
+
+    def test_kernel_names_are_sanitized_in_diagnostics(self):
+        state = {'nftables':[{'rule':{'family':'inet','table':'bad\x1b[31m\nname','chain':'input','expr':[{'drop':None}]}}]}
+        message = core.nft_conflict(json.dumps(state))
+        self.assertNotIn('\x1b', message); self.assertNotIn('\n', message)
+
+    def test_two_inspections_allow_default_tables_created_by_iptables_query(self):
+        queried = False
+        def command(args, check=True):
+            nonlocal queried
+            if args == ['nft','-j','list','ruleset']:
+                output = json.dumps({'nftables':[{'table':{'family':'ip','name':'filter'}},
+                    {'chain':{'family':'ip','table':'filter','name':'INPUT','hook':'input','policy':'accept'}}] if queried else []})
+            elif args == ['iptables-save']:
+                queried = True; output = '*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n'
+            else: raise AssertionError(args)
+            return subprocess.CompletedProcess(args,0,stdout=output,stderr='')
+        with mock.patch.object(core,'firewall_status',return_value={'ufw':'inactive','firewalld':'unavailable'}), \
+             mock.patch.object(core.shutil,'which',side_effect=lambda name: name if name in ('nft','iptables-save') else None), \
+             mock.patch.object(core,'system_command',side_effect=command):
+            core.firewall_setup_check(); core.firewall_setup_check()
+
+    def test_conflict_reports_exact_command_table_and_chain(self):
+        def command(args, check=True):
+            if args == ['nft','-j','list','ruleset']:
+                output = '{"nftables":[]}'
+            elif args == ['ip6tables-save']:
+                output = '*filter\n:INPUT DROP [0:0]\nCOMMIT\n'
+            else: raise AssertionError(args)
+            return subprocess.CompletedProcess(args,0,stdout=output,stderr='')
+        with mock.patch.object(core,'firewall_status',return_value={'ufw':'unavailable','firewalld':'unavailable'}), \
+             mock.patch.object(core.shutil,'which',side_effect=lambda name: name if name in ('nft','ip6tables-save') else None), \
+             mock.patch.object(core,'system_command',side_effect=command):
+            with self.assertRaisesRegex(ValueError,'ip6tables-save / filter/INPUT policy=DROP'):
+                core.firewall_setup_check()
+
+
+class UFWDiagnosticTests(unittest.TestCase):
+    def test_failed_step_reports_command_and_safe_reason(self):
+        error = subprocess.CalledProcessError(1, ['ufw'], stderr="ERROR: Invalid position '1'\nsecret-token-value")
+        with mock.patch.object(core,'system_command',side_effect=error):
+            with self.assertRaises(ValueError) as caught:
+                core.ufw_command(['prepend','allow','2222/tcp'])
+        message = str(caught.exception)
+        self.assertIn('ufw prepend allow 2222/tcp', message)
+        self.assertIn('空规则列表位置无效', message)
+        self.assertNotIn('secret-token-value', message)
+
+    def test_permission_and_timeout_have_ufw_context(self):
+        failures = [subprocess.CalledProcessError(1,['ufw'],stderr='Permission denied private-details'),
+                    subprocess.TimeoutExpired(['ufw'],30)]
+        for error in failures:
+            with mock.patch.object(core,'system_command',side_effect=error):
+                with self.assertRaises(ValueError) as caught: core.ufw_command(['status'])
+            self.assertIn('UFW',str(caught.exception))
+            self.assertNotIn('private-details',str(caught.exception))
+
+
+# Distro frontend compatibility without a real netfilter backend. CI installs ufw.
+import importlib.util
+HAS_UFW = importlib.util.find_spec('ufw') is not None
+
+
+@unittest.skipUnless(HAS_UFW, 'Install the distro ufw Python package for upstream frontend checks')
+class UpstreamUFWFrontendTests(unittest.TestCase):
+    def setUp(self):
+        import builtins
+        import ufw.frontend
+        import ufw.common
+        patch = mock.patch.object(builtins, '_', lambda text:text, create=True)
+        patch.start(); self.addCleanup(patch.stop)
+        self.frontend_module = ufw.frontend
+        self.error_type = ufw.common.UFWError
+        self.frontend = ufw.frontend.UFWFrontend.__new__(ufw.frontend.UFWFrontend)
+        class Backend:
+            def __init__(self): self.rules = {False:[],True:[]}; self.positions = []
+            def get_rules_count(self, v6): return len(self.rules[v6])
+            def use_ipv6(self): return True
+            def set_rule(self, rule):
+                rules = self.rules[rule.v6]
+                if rule.position < 0 or rule.position > len(rules): raise AssertionError('invalid backend position')
+                self.positions.append((rule.v6,rule.position))
+                if rule.position: rules.insert(rule.position-1,rule.dport)
+                else: rules.append(rule.dport)
+                return 'test-only'
+        self.backend = Backend(); self.frontend.backend = self.backend
+
+    def apply(self, arguments):
+        parsed = self.frontend_module.parse_command(['ufw',*arguments])
+        self.frontend.set_rule(parsed.data['rule'],parsed.data['iptype'])
+
+    def test_insert_one_reproduces_empty_rule_rejection(self):
+        with self.assertRaises(self.error_type):
+            self.apply(['insert','1','allow','in','proto','tcp','to','any','port','2222'])
+        self.assertEqual(self.backend.positions,[])
+
+    def test_prepend_handles_both_families_empty(self):
+        self.apply(['prepend','allow','in','proto','tcp','to','any','port','2222'])
+        self.assertEqual(self.backend.positions,[(False,0),(True,0)])
+        self.assertEqual(self.backend.rules,{False:['2222'],True:['2222']})
+
+    def test_prepend_handles_one_family_empty(self):
+        self.backend.rules[False] = ['existing']
+        self.apply(['prepend','allow','in','proto','tcp','to','any','port','2222'])
+        self.assertEqual(self.backend.positions,[(False,1),(True,0)])
