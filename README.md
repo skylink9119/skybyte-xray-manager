@@ -28,7 +28,7 @@
 
 ---
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.2**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.3**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
 ## 三种节点
 
@@ -47,7 +47,7 @@
 需要 **root、Ubuntu/Debian 和 systemd**；二进制支持 amd64、arm64。在 VPS 的 root 终端执行完整命令：
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.2/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.3/install.sh)
 ```
 
 安装入口会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装后，重新登录 SSH 也可以输入下面的快捷命令：
@@ -84,15 +84,15 @@ bash install.sh
 | 6 | 校验并更新官方稳定 Xray 核心 |
 | 7 / 8 | 配置备份与恢复 |
 | 9 / 10 / 11 | 使用说明、语言、卸载 |
-| 12 | 防火墙端口放行、BBR 状态/启用/恢复（开发版） |
+| 12 | 防火墙端口放行、BBR 状态/启用/恢复 |
 
 **5 → 4**：选择已安装协议后，可修改客户端连接地址、监听 TCP 端口及 XHTTP 路径；每项回车保留原值，全部留空直接返回。Vision 不显示路径选项。UUID、Reality 密钥、Short ID、TLS SNI、证书及其他节点保持原值。修改前校验输入、托管节点端口冲突及新端口占用，校验通过后同步生成服务端配置、节点链接、Base64 和 Xray 客户端 JSON。运行中的服务会重启，失败则回退；原先停止的服务继续停止。修改后请从菜单 2 获取新链接或配置，重新导入客户端，并放行新 TCP 端口；CDN 使用者还需确认新端口受提供商支持。
 
-需要在系统防火墙和服务商安全组放行实际 TCP 端口。系统防火墙可通过开发版菜单 12 操作；服务商安全组仍需自行设置。
+需要在系统防火墙和服务商安全组放行实际 TCP 端口。系统防火墙可通过菜单 12 操作；服务商安全组仍需自行设置。
 
-## 防火墙与 BBR（开发版）
+## 防火墙与 BBR
 
-此功能尚未包含在 v0.1.2 发布包。入口为 **12 → 防火墙 / BBR**：
+入口为 **12 → 防火墙 / BBR**：
 
 - **1**：查看 UFW/firewalld 状态；firewalld 同时显示默认区域和活动区域。
 - **2 / 3**：放行全部已安装节点的 TCP 端口，或指定一个 1–65535 的 TCP 端口。执行前展示端口并要求输入 YES。firewalld 可填写区域，回车使用默认区域；请确保它对应公网网卡。仅操作已启用的一个 UFW 或 firewalld；未启用、同时启用两者或无法识别状态时停止。不会安装/启停防火墙、清空规则、修改默认策略、删除端口或改动 SSH。firewalld 分别更新运行时和永久规则，不执行全局 reload。失败时可能已有部分放行，请检查状态后重试。
