@@ -28,7 +28,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -686,22 +686,24 @@ def ufw_package_state():
     if status == "install ok installed":
         return "installed"
     fields = status.split()
-    if len(fields) == 3 and fields[1] == "ok" and fields[2] in ("not-installed", "config-files"):
-        return "absent"
+    if (len(fields) == 3 and fields[0] in ("install", "deinstall", "purge", "unknown")
+            and fields[1] == "ok" and fields[2] in ("not-installed", "config-files")):
+        return "config-files" if fields[2] == "config-files" else "absent"
     raise ValueError("UFW package is held or incomplete; fix package state first / UFW 软件包被保留或状态不完整，请先修复软件包状态")
 
 
-def ufw_remove_plan():
-    if ufw_package_state() == "absent":
+def ufw_remove_plan(purge=False):
+    state = ufw_package_state()
+    if state == "absent" or (state == "config-files" and not purge):
         return "absent"
-    if not shutil.which("ufw"):
+    if state == "installed" and not shutil.which("ufw"):
         raise ValueError("UFW package files are missing; repair it before removal / UFW 软件包文件缺失，请先修复后再停用和卸载")
     try:
-        # --no-act MUST precede --remove; check dependencies without removing anything.
-        system_command(["dpkg", "--no-act", "--remove", "ufw"])
+        # --no-act MUST precede the action; never remove files during preflight.
+        system_command(["dpkg", "--no-act", "--purge" if purge else "--remove", "ufw"])
     except (OSError, subprocess.SubprocessError):
         raise ValueError("UFW removal dependency/lock check failed; no firewall changes / UFW 卸载依赖或锁检查失败，未改变防火墙；请检查依赖 UFW 的软件及软件包锁") from None
-    return "ready"
+    return "config-files" if state == "config-files" else "ready"
 
 
 def firewall_status():
@@ -1117,6 +1119,7 @@ def main():
     parser.add_argument("--zone", default="")
     parser.add_argument("--release", default="")
     parser.add_argument("--ssh-ports", nargs="+", default=[])
+    parser.add_argument("--purge", action="store_true")
     options = parser.parse_args()
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
@@ -1132,7 +1135,7 @@ def main():
         print(ufw_package_state())
         return
     if options.command == "ufw-remove-plan":
-        print(ufw_remove_plan())
+        print(ufw_remove_plan(options.purge))
         return
     if options.command == "firewall-setup-check":
         firewall_setup_check()

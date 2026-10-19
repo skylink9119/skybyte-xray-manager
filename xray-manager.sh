@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.7
+VERSION=0.1.8
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -65,7 +65,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -723,22 +723,24 @@ def ufw_package_state():
     if status == "install ok installed":
         return "installed"
     fields = status.split()
-    if len(fields) == 3 and fields[1] == "ok" and fields[2] in ("not-installed", "config-files"):
-        return "absent"
+    if (len(fields) == 3 and fields[0] in ("install", "deinstall", "purge", "unknown")
+            and fields[1] == "ok" and fields[2] in ("not-installed", "config-files")):
+        return "config-files" if fields[2] == "config-files" else "absent"
     raise ValueError("UFW package is held or incomplete; fix package state first / UFW 软件包被保留或状态不完整，请先修复软件包状态")
 
 
-def ufw_remove_plan():
-    if ufw_package_state() == "absent":
+def ufw_remove_plan(purge=False):
+    state = ufw_package_state()
+    if state == "absent" or (state == "config-files" and not purge):
         return "absent"
-    if not shutil.which("ufw"):
+    if state == "installed" and not shutil.which("ufw"):
         raise ValueError("UFW package files are missing; repair it before removal / UFW 软件包文件缺失，请先修复后再停用和卸载")
     try:
-        # --no-act MUST precede --remove; check dependencies without removing anything.
-        system_command(["dpkg", "--no-act", "--remove", "ufw"])
+        # --no-act MUST precede the action; never remove files during preflight.
+        system_command(["dpkg", "--no-act", "--purge" if purge else "--remove", "ufw"])
     except (OSError, subprocess.SubprocessError):
         raise ValueError("UFW removal dependency/lock check failed; no firewall changes / UFW 卸载依赖或锁检查失败，未改变防火墙；请检查依赖 UFW 的软件及软件包锁") from None
-    return "ready"
+    return "config-files" if state == "config-files" else "ready"
 
 
 def firewall_status():
@@ -1154,6 +1156,7 @@ def main():
     parser.add_argument("--zone", default="")
     parser.add_argument("--release", default="")
     parser.add_argument("--ssh-ports", nargs="+", default=[])
+    parser.add_argument("--purge", action="store_true")
     options = parser.parse_args()
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
@@ -1169,7 +1172,7 @@ def main():
         print(ufw_package_state())
         return
     if options.command == "ufw-remove-plan":
-        print(ufw_remove_plan())
+        print(ufw_remove_plan(options.purge))
         return
     if options.command == "firewall-setup-check":
         firewall_setup_check()
@@ -1660,7 +1663,7 @@ for p in paths:
  if p.exists(): p.unlink()
 PY
  systemctl daemon-reload || return 1
- warn '已卸载。备份、未知文件、系统依赖、防火墙规则和 BBR 设置保留；如需恢复 BBR，请在卸载前使用菜单 12 → 6。' 'Removed. Backups, unknown files, dependencies, firewall rules and BBR settings retained; restore BBR with menu 12 → 6 before uninstalling if needed.'
+ warn '已卸载。备份、未知文件、系统依赖、防火墙规则和 BBR 设置保留；如需恢复 BBR，请在卸载前使用菜单 12 → 8。' 'Removed. Backups, unknown files, dependencies, firewall rules and BBR settings retained; restore BBR with menu 12 → 8 before uninstalling if needed.'
  exit 0
 }
 guide(){
@@ -1688,7 +1691,7 @@ firewall_open(){
   helper node-ports || return 1
   confirm '放行以上全部已安装节点的 TCP 端口？' 'Allow TCP ports for all installed nodes above?' || return 0
  fi
- if ! helper firewall-allow "${flags[@]}"; then
+ if ! helper firewall-allow ${flags[@]+"${flags[@]}"}; then
   error '防火墙操作未完成，部分放行规则可能已添加；请查看状态后重试。' 'Firewall operation incomplete; some allows may have been added. Check status before retrying.'
   return 1
  fi
@@ -1722,71 +1725,101 @@ install_firewall(){
  helper firewall-status
 }
 remove_firewall(){
- local choice current plan result
- menu '仅操作 UFW：\n1 仅停用，保留软件包和规则配置\n2 卸载软件包，保留规则配置\n0 返回' 'UFW only:\n1 Disable only; keep package and rule configuration\n2 Remove package; keep rule configuration\n0 Back'
+ local choice current=absent plan='' result action=--remove
+ menu '仅操作 UFW：\n1 仅停用，保留软件包和规则配置\n2 卸载软件包，保留规则配置\n3 卸载并清除规则配置\n0 返回' 'UFW only:\n1 Disable only; keep package and rule configuration\n2 Remove package; keep rule configuration\n3 Remove package and purge rule configuration\n0 Back'
  choice=$(ask '> ' '> ') || return 1
- case $choice in 0) return 0;; 1|2) :;; *) return 1;; esac
- current=$(helper ufw-state) || return 1
- say "当前 UFW 状态：$current" "Current UFW state: $current"
- if [[ $choice == 2 ]]; then
-  plan=$(helper ufw-remove-plan) || return 1
+ case $choice in 0) return 0;; 1|2|3) :;; *) return 1;; esac
+ if [[ $choice != 1 ]]; then
+  if [[ $choice == 3 ]]; then
+   action=--purge
+   plan=$(helper ufw-remove-plan --purge) || return 1
+  else
+   plan=$(helper ufw-remove-plan) || return 1
+  fi
   if [[ $plan == absent ]]; then
-   say 'UFW 软件包未安装，无需卸载；残留配置保持原样。' 'UFW package is not installed; nothing to remove. Any residual configuration is retained.'
+   if [[ $choice == 3 ]]; then
+    say 'dpkg 未记录 UFW 软件包或残留配置；未清理未知文件。' 'dpkg records no UFW package or residual configuration; unknown files were not deleted.'
+   else
+    say 'UFW 软件包未安装，无需卸载；残留配置保持原样。' 'UFW package is not installed; nothing to remove. Any residual configuration is retained.'
+   fi
    return 0
   fi
- elif [[ $current == absent ]]; then
-  say '未找到 UFW，无需停用。' 'UFW was not found; nothing to disable.'
-  return 0
+  if [[ $plan != ready && ( $plan != config-files || $choice != 3 ) ]]; then
+   error '无法确认 UFW 卸载计划，未执行操作。' 'UFW removal plan was not recognized; no action taken.'
+   return 1
+  fi
  fi
- warn '停用后 UFW 的主机入站保护将不再生效，原先被阻止的端口可能可达。此操作仅针对 UFW；其他防火墙和服务商安全组仍各自生效。节点、SSH 配置和 BBR 参数保留。' 'Disabling UFW removes its host filtering protection; previously blocked ports may become reachable. Only UFW is targeted; other firewalls and provider rules remain separate. Node, SSH configuration and BBR settings are retained.'
- if [[ $choice == 2 ]]; then
+ if [[ $plan == config-files ]]; then
+  say 'UFW 软件包已卸载，仅剩规则配置。' 'UFW package is already removed; only configuration remains.'
+ else
+  current=$(helper ufw-state) || return 1
+  say "当前 UFW 状态：$current" "Current UFW state: $current"
+  if [[ $choice == 1 && $current == absent ]]; then
+   say '未找到 UFW，无需停用。' 'UFW was not found; nothing to disable.'
+   return 0
+  fi
+  warn '停用后 UFW 的主机入站保护将不再生效，原先被阻止的端口可能可达。此操作仅针对 UFW；其他防火墙和服务商安全组仍各自生效。节点、SSH 配置和 BBR 参数保留。' 'Disabling UFW removes its host filtering protection; previously blocked ports may become reachable. Only UFW is targeted; other firewalls and provider rules remain separate. Node, SSH configuration and BBR settings are retained.'
+ fi
+ if [[ $choice == 3 ]]; then
+  warn '将通过 dpkg 清除 UFW 软件包及规则配置，此操作不可恢复；如需保留，请选择第 2 项。其他软件及未知文件不在清理范围内。' 'dpkg will purge the UFW package and rule configuration. This cannot be undone; choose option 2 to retain configuration. Other software and unknown files are outside the cleanup scope.'
+  confirm '卸载 UFW 并清除规则配置？' 'Remove UFW and purge its rule configuration?' || return 0
+ elif [[ $choice == 2 ]]; then
   confirm '先停用并验证 UFW，再卸载 UFW 软件包（保留配置）？' 'Disable and verify UFW, then remove its package while keeping configuration?' || return 0
  else
   confirm '停用 UFW（保留软件包和配置）？' 'Disable UFW while keeping its package and configuration?' || return 0
  fi
- result=$(helper ufw-disable) || return 1
- if [[ $result != disabled ]]; then
-  error '没有确认 UFW 停用成功，未继续卸载。' 'UFW disable was not confirmed; package removal was not attempted.'
-  return 1
+ if [[ $plan != config-files ]]; then
+  result=$(helper ufw-disable) || return 1
+  if [[ $result != disabled ]]; then
+   error '没有确认 UFW 停用成功，未继续卸载。' 'UFW disable was not confirmed; package removal was not attempted.'
+   return 1
+  fi
  fi
  if [[ $choice == 1 ]]; then
   say 'UFW 已停用，软件包和规则配置保留。' 'UFW disabled; its package and rule configuration are retained.'
   return 0
  fi
- # Remove only ufw; no dependency force, purge, autoremove or other package targets.
- if ! dpkg --remove ufw; then
-  error 'UFW 已停用，但软件包卸载未完成；请检查上方 dpkg 提示。不会自动重新启用。' 'UFW is disabled, but package removal did not complete; inspect the dpkg output above. It will not be re-enabled automatically.'
+ # Target only ufw, with purge selected explicitly; never force dependencies or autoremove.
+ if ! dpkg "$action" ufw; then
+  if [[ $choice == 3 ]]; then
+   error 'UFW 软件包或规则配置清除未完成，可能已部分清除；请检查上方 dpkg 提示。不会自动重新启用。' 'UFW package or configuration purge did not complete; some files may already be removed. Inspect the dpkg output above. It will not be re-enabled automatically.'
+  else
+   error 'UFW 已停用，但软件包卸载未完成；请检查上方 dpkg 提示。不会自动重新启用。' 'UFW is disabled, but package removal did not complete; inspect the dpkg output above. It will not be re-enabled automatically.'
+  fi
   return 1
  fi
  result=$(helper ufw-package-state) || return 1
- if [[ $result != absent ]]; then
-  error 'UFW 已停用，但尚未确认软件包卸载完成。' 'UFW is disabled, but package removal could not be verified.'
+ if [[ $choice == 3 && $result == absent ]]; then
+  say 'UFW 软件包及规则配置已由 dpkg 清除；未清理其他软件或未知文件。' 'UFW package and rule configuration purged by dpkg; other software and unknown files were not deleted.'
+ elif [[ $choice == 2 && ( $result == absent || $result == config-files ) ]]; then
+  say 'UFW 软件包已卸载，规则配置保留。未卸载 iptables/nftables 或其他防火墙，也未执行全局规则清空。' 'UFW package removed; rule configuration retained. iptables/nftables and other firewalls were not removed, and no global rule flush was performed.'
+ else
+  error '尚未确认 UFW 软件包卸载或配置清除完成；请检查软件包状态。' 'UFW package removal or configuration purge could not be verified; check package status.'
   return 1
  fi
- say 'UFW 软件包已卸载，规则配置保留。未卸载 iptables/nftables 或其他防火墙，也未执行全局规则清空。' 'UFW package removed; rule configuration retained. iptables/nftables and other firewalls were not removed, and no global rule flush was performed.'
 }
 network_menu(){
  local choice value
- menu '1 防火墙状态  2 放行全部节点 TCP 端口  3 放行指定 TCP 端口\n4 BBR 状态  5 启用 BBR + fq  6 恢复启用前参数\n7 安装并启用 UFW  8 停用/卸载 UFW  0 返回' '1 Firewall status  2 Allow all node TCP ports  3 Allow a TCP port\n4 BBR status  5 Enable BBR + fq  6 Restore previous settings\n7 Install and enable UFW  8 Disable/remove UFW  0 Back'
+ menu '防火墙\n1 查看防火墙状态\n2 安装并启用 UFW\n3 放行全部节点 TCP 端口\n4 放行指定 TCP 端口\n5 停用/卸载 UFW\n\nBBR\n6 查看 BBR 状态\n7 启用 BBR + fq\n8 恢复启用前参数\n\n0 返回' 'Firewall\n1 Show firewall status\n2 Install and enable UFW\n3 Allow all node TCP ports\n4 Allow a TCP port\n5 Disable/remove UFW\n\nBBR\n6 Show BBR status\n7 Enable BBR + fq\n8 Restore previous settings\n\n0 Back'
  choice=$(ask '> ' '> ') || return 1
  case $choice in
   1) helper firewall-status;;
-  2) firewall_open;;
-  3) value=$(ask '要放行的 TCP 端口（1–65535）：' 'TCP port to allow (1–65535): ') || return 1
+  2) install_firewall;;
+  3) firewall_open;;
+  4) value=$(ask '要放行的 TCP 端口（1–65535）：' 'TCP port to allow (1–65535): ') || return 1
      if [[ ! $value =~ ^[0-9]{1,5}$ ]] || (( 10#$value < 1 || 10#$value > 65535 )); then
       error 'TCP 端口无效。' 'Invalid TCP port.'; return 1
      fi
      firewall_open "$value";;
-  4) helper bbr-status;;
-  5) warn 'BBR 调整全系统新 TCP 连接的默认拥塞控制；不保证提速，不更换内核或重启服务，也不替换现有网卡队列。' 'BBR changes the system default for new TCP connections; speed gains vary. No kernel replacement, service restart or live interface queue replacement.'
+  5) remove_firewall;;
+  6) helper bbr-status;;
+  7) warn 'BBR 调整全系统新 TCP 连接的默认拥塞控制；不保证提速，不更换内核或重启服务，也不替换现有网卡队列。' 'BBR changes the system default for new TCP connections; speed gains vary. No kernel replacement, service restart or live interface queue replacement.'
      confirm '保存原参数并启用 BBR + fq？' 'Save previous values and enable BBR + fq?' || return 0
      helper bbr-enable || return 1
      helper bbr-status;;
-  6) confirm '恢复本脚本启用 BBR 前的系统参数并移除本脚本的持久化文件？' 'Restore values saved before enabling BBR and remove the managed persistence file?' || return 0
+  8) confirm '恢复本脚本启用 BBR 前的系统参数并移除本脚本的持久化文件？' 'Restore values saved before enabling BBR and remove the managed persistence file?' || return 0
      helper bbr-restore || return 1
      helper bbr-status;;
-  7) install_firewall;;
-  8) remove_firewall;;
   0) return 0;; *) return 1;;
  esac
 }
