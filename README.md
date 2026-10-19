@@ -84,10 +84,25 @@ bash install.sh
 | 6 | 校验并更新官方稳定 Xray 核心 |
 | 7 / 8 | 配置备份与恢复 |
 | 9 / 10 / 11 | 使用说明、语言、卸载 |
+| 12 | 防火墙端口放行、BBR 状态/启用/恢复（开发版） |
 
 **5 → 4**：选择已安装协议后，可修改客户端连接地址、监听 TCP 端口及 XHTTP 路径；每项回车保留原值，全部留空直接返回。Vision 不显示路径选项。UUID、Reality 密钥、Short ID、TLS SNI、证书及其他节点保持原值。修改前校验输入、托管节点端口冲突及新端口占用，校验通过后同步生成服务端配置、节点链接、Base64 和 Xray 客户端 JSON。运行中的服务会重启，失败则回退；原先停止的服务继续停止。修改后请从菜单 2 获取新链接或配置，重新导入客户端，并放行新 TCP 端口；CDN 使用者还需确认新端口受提供商支持。
 
-需要在系统防火墙和服务商安全组放行实际 TCP 端口。本脚本不自动更改 UFW、SSH 端口或服务商安全组。
+需要在系统防火墙和服务商安全组放行实际 TCP 端口。系统防火墙可通过开发版菜单 12 操作；服务商安全组仍需自行设置。
+
+## 防火墙与 BBR（开发版）
+
+此功能尚未包含在 v0.1.2 发布包。入口为 **12 → 防火墙 / BBR**：
+
+- **1**：查看 UFW/firewalld 状态；firewalld 同时显示默认区域和活动区域。
+- **2 / 3**：放行全部已安装节点的 TCP 端口，或指定一个 1–65535 的 TCP 端口。执行前展示端口并要求输入 YES。firewalld 可填写区域，回车使用默认区域；请确保它对应公网网卡。仅操作已启用的一个 UFW 或 firewalld；未启用、同时启用两者或无法识别状态时停止。不会安装/启停防火墙、清空规则、修改默认策略、删除端口或改动 SSH。firewalld 分别更新运行时和永久规则，不执行全局 reload。失败时可能已有部分放行，请检查状态后重试。
+- **4 / 5 / 6**：查看 BBR 状态、启用 BBR 与 fq 默认参数、恢复启用前参数。只使用内核已有的 BBR（必要时尝试加载 `tcp_bbr` / `sch_fq` 模块），不安装或更换内核。原参数保存在本脚本独立文件 `/etc/sysctl.d/90-skybyte-xray-bbr.conf` 的注释中；拒绝覆盖其他内容或符号链接。重复启用保留最初记录，普通应用失败时尝试回退；回退未完成会保留文件并报错，可再次恢复。
+
+BBR 修改的是系统 TCP 默认拥塞控制，主要作用于新连接，不能保证提速。`net.core.default_qdisc=fq` 是默认队列设置，不会直接替换已有网卡队列；其他系统启动配置可能覆盖这些值，重启后请再次查看状态。恢复操作还原启用前的运行时参数并移除本脚本文件，原有的其他 sysctl 文件保持不变。卸载管理器保留防火墙规则和 BBR 设置；需要恢复 BBR 时应先执行 **12 → 6**。
+
+主机放行不等于公网连通：服务商安全组、UFW 的 IPv6 配置、规则优先级、firewalld 区域、CDN 端口支持仍需核对。本功能不直接编辑原生 nftables/iptables 规则。接口及故障场景使用隔离命令模拟器测试，不能替代实际 VPS 防火墙、内核和重启验收。
+
+参考：[UFW 手册](https://manpages.ubuntu.com/manpages/noble/man8/ufw.8.html)、[firewalld 手册](https://firewalld.org/documentation/man-pages/firewall-cmd.html)、[Linux TCP 参数](https://kernel.org/doc/html/latest/networking/ip-sysctl.html)、[默认队列参数](https://www.kernel.org/doc/html/latest/admin-guide/sysctl/net.html)。
 
 ## 域名 TLS 和 CDN
 

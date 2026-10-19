@@ -666,10 +666,164 @@ def error_message(error):
     return "Operation failed; check files, network and permissions / 操作失败，请检查文件、网络与权限"
 
 
+def system_command(arguments, check=True):
+    return subprocess.run(arguments, check=check, capture_output=True, text=True,
+                          timeout=30, env={**os.environ, "LC_ALL": "C"})
+
+
+def firewall_status():
+    status = {"ufw": "unavailable", "firewalld": "unavailable"}
+    if shutil.which("ufw"):
+        result = system_command(["ufw", "status"])
+        if result.stdout.startswith("Status: active"):
+            status["ufw"] = "active"
+        elif result.stdout.startswith("Status: inactive"):
+            status["ufw"] = "inactive"
+        else:
+            raise ValueError("Cannot determine UFW status / 无法识别 UFW 状态")
+    if shutil.which("firewall-cmd"):
+        result = system_command(["firewall-cmd", "--state"], check=False)
+        if result.returncode == 0 and result.stdout.strip() == "running":
+            status["firewalld"] = "active"
+        elif result.returncode == 252:
+            status["firewalld"] = "inactive"
+        else:
+            raise ValueError("Cannot determine firewalld status / 无法识别 firewalld 状态")
+    return status
+
+
+def firewall_allow(numbers, zone=""):
+    numbers = sorted({port(number) for number in numbers})
+    if not numbers:
+        raise ValueError("No TCP ports selected / 没有可放行的 TCP 端口")
+    if zone and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", zone):
+        raise ValueError("Invalid firewalld zone / firewalld 区域名称无效")
+    status = firewall_status()
+    active = [key for key, value in status.items() if value == "active"]
+    if len(active) != 1:
+        raise ValueError("Exactly one active UFW/firewalld is required; configure your firewall first / 需要仅有一个已启用的 UFW/firewalld，请先配置防火墙；未修改规则")
+    if active[0] == "ufw":
+        for number in numbers:
+            system_command(["ufw", "allow", "in", "proto", "tcp", "to", "any", "port", str(number)])
+        return "UFW"
+    if not zone:
+        zone = system_command(["firewall-cmd", "--get-default-zone"]).stdout.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", zone):
+        raise ValueError("Invalid firewalld zone / firewalld 区域名称无效")
+    zones = system_command(["firewall-cmd", "--get-zones"]).stdout.split()
+    if zone not in zones:
+        raise ValueError("Unknown firewalld zone / firewalld 区域不存在")
+    # No reload: change just these ports in the chosen runtime and permanent zone.
+    for number in numbers:
+        for permanent in (True, False):
+            args = ["firewall-cmd", "--zone=" + zone] + (["--permanent"] if permanent else [])
+            query = system_command(args + [f"--query-port={number}/tcp"], check=False)
+            if query.returncode not in (0, 1):
+                raise ValueError("firewalld query failed / firewalld 规则查询失败")
+            if query.returncode == 1:
+                system_command(args + [f"--add-port={number}/tcp"])
+                if system_command(args + [f"--query-port={number}/tcp"], check=False).returncode != 0:
+                    raise ValueError("firewalld verification failed / firewalld 放行验证失败")
+    return "firewalld / " + zone
+
+
+BBR_VALUES = {"net.core.default_qdisc": "fq", "net.ipv4.tcp_congestion_control": "bbr"}
+BBR_MARK = "# SKYBYTE Xray Manager BBR v1\n"
+BBR_PATH = Path("/etc/sysctl.d/90-skybyte-xray-bbr.conf")
+
+
+def network_values():
+    result = {}
+    for setting in BBR_VALUES:
+        value = system_command(["sysctl", "-n", setting]).stdout.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_]+", value):
+            raise ValueError("Invalid kernel network value / 内核网络参数无效")
+        result[setting] = value
+    return result
+
+
+def bbr_content(previous):
+    if set(previous) != set(BBR_VALUES) or any(not isinstance(v, str) or not re.fullmatch(r"[A-Za-z0-9_]+", v) for v in previous.values()):
+        raise ValueError("Invalid saved network settings / 原网络设置无效")
+    return BBR_MARK + "# previous: " + json.dumps(previous, sort_keys=True) + "\n" + "".join(k + " = " + v + "\n" for k, v in BBR_VALUES.items())
+
+
+def bbr_previous(path):
+    checked_path(path)
+    if not path.exists():
+        return None
+    text = path.read_text()
+    if not text.startswith(BBR_MARK + "# previous: "):
+        raise ValueError("Existing BBR file is not owned / 已有 BBR 配置不属于本脚本")
+    previous = json.loads(text.splitlines()[1].removeprefix("# previous: "))
+    if text != bbr_content(previous):
+        raise ValueError("BBR file was edited; restore it before continuing / BBR 配置已被修改，请先核对恢复")
+    return previous
+
+
+def write_network_values(values):
+    for setting, value in values.items():
+        system_command(["sysctl", "-w", setting + "=" + value])
+    if network_values() != values:
+        raise ValueError("Kernel settings did not take effect / 内核设置未生效")
+
+
+def rollback_network_values(values):
+    # Attempt both settings even when one cannot be restored.
+    failed = False
+    for setting, value in values.items():
+        try:
+            system_command(["sysctl", "-w", setting + "=" + value])
+        except (OSError, subprocess.SubprocessError):
+            failed = True
+    return not failed and network_values() == values
+
+
+def bbr_change(enable, path=BBR_PATH):
+    path = checked_path(path)
+    previous = bbr_previous(path)
+    current = network_values()
+    if enable:
+        available = system_command(["sysctl", "-n", "net.ipv4.tcp_available_congestion_control"]).stdout.split()
+        if "bbr" not in available:
+            if shutil.which("modprobe"):
+                system_command(["modprobe", "tcp_bbr"], check=False)
+            available = system_command(["sysctl", "-n", "net.ipv4.tcp_available_congestion_control"]).stdout.split()
+        if "bbr" not in available:
+            raise ValueError("Kernel does not provide BBR; no kernel upgrade performed / 当前内核不支持 BBR；未更换内核")
+        if shutil.which("modprobe"):
+            system_command(["modprobe", "sch_fq"], check=False)
+        old_file = path.read_text() if previous is not None else None
+        # Persist original values before touching the runtime, for recovery after interruption.
+        write_private(path, bbr_content(previous if previous is not None else current), 0o644)
+        target = BBR_VALUES
+    else:
+        if previous is None:
+            raise ValueError("No managed BBR settings to restore / 没有本脚本管理的 BBR 设置可恢复")
+        old_file = path.read_text()
+        target = previous
+    try:
+        write_network_values(target)
+        if not enable:
+            path.unlink()
+    except BaseException as error:
+        try:
+            restored = rollback_network_values(current)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            restored = False
+        if not restored:
+            raise ValueError("Network rollback incomplete; saved BBR file retained for recovery / 网络参数回退未完成，已保留 BBR 文件，请检查 sysctl") from error
+        if old_file is None:
+            path.unlink()
+        else:
+            write_private(path, old_file, 0o644)
+        raise
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight"])
+                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -692,11 +846,48 @@ def main():
     parser.add_argument("--enabled", action="store_true")
     parser.add_argument("--asset", default="Xray-linux-64.zip")
     parser.add_argument("--tag", default=CORE_VERSION)
+    parser.add_argument("--ports", nargs="+", default=[])
+    parser.add_argument("--zone", default="")
     options = parser.parse_args()
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
         options.address = options.address if options.address is not None else ""
         options.path = options.path if options.path is not None else ""
+    if options.command == "node-ports":
+        root = checked_path(options.root)
+        ensure_owned(root)
+        nodes = load_state(root)["nodes"]
+        if not nodes:
+            raise ValueError("No nodes installed / 尚未安装节点")
+        for kind, node in nodes.items():
+            print(node["name"] + " | " + kind + " | TCP " + str(node["port"]))
+        return
+    if options.command == "firewall-status":
+        labels = {"active": "active / 已启用", "inactive": "inactive / 未启用", "unavailable": "unavailable / 未安装"}
+        for backend, status in firewall_status().items():
+            print(backend + ": " + labels[status])
+        if shutil.which("firewall-cmd") and system_command(["firewall-cmd", "--state"], check=False).returncode == 0:
+            print("Default zone / 默认区域: " + system_command(["firewall-cmd", "--get-default-zone"]).stdout.strip())
+            print(system_command(["firewall-cmd", "--get-active-zones"]).stdout.strip())
+        if shutil.which("ufw"):
+            print(system_command(["ufw", "status", "verbose"]).stdout.strip())
+        return
+    if options.command == "firewall-allow":
+        numbers = options.ports
+        if not numbers:
+            root = checked_path(options.root)
+            ensure_owned(root)
+            numbers = [node["port"] for node in load_state(root)["nodes"].values()]
+        print(firewall_allow(numbers, options.zone))
+        return
+    if options.command == "bbr-status":
+        print(json_text(network_values()))
+        print("Available / 可用: " + system_command(["sysctl", "-n", "net.ipv4.tcp_available_congestion_control"]).stdout.strip())
+        print("Managed / 本脚本管理: " + ("yes" if bbr_previous(BBR_PATH) is not None else "no"))
+        return
+    if options.command in ("bbr-enable", "bbr-restore"):
+        bbr_change(options.command == "bbr-enable")
+        return
     if options.command == "selfcheck":
         print("SKYBYTE Xray Manager " + VERSION + " OK")
         return
@@ -969,7 +1160,7 @@ install_node(){
   selected=$(ask "模式 [$mode]（auto / packet-up / stream-up / stream-one）：" "Mode [$mode] (auto / packet-up / stream-up / stream-one): ") || return 1
   mode=${selected:-$mode}
  fi
- warn '请放行实际 TCP 端口；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port; validation does not prove public/CDN connectivity.'
+ warn '请放行实际 TCP 端口，可用菜单 12 管理系统防火墙；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port using menu 12 for the host firewall; validation does not prove public/CDN connectivity.'
  confirm '安装并启动所选节点？' 'Install and start the selected node?' || return 1
  ensure_binary || { error '核心准备失败，具体原因见上方提示。' 'Core preparation failed; see the reason above.'; return 1; }
  flags+=(--kind "$kind" --port "$node_port" --listen "$listen" --address "$host" --sni "$sni" --name "$node_name")
@@ -1132,7 +1323,7 @@ for p in paths:
  if p.exists(): p.unlink()
 PY
  systemctl daemon-reload || return 1
- warn '已卸载。备份、未知文件、系统依赖及防火墙规则保留。' 'Removed. Backups, unknown files, dependencies and firewall rules retained.'
+ warn '已卸载。备份、未知文件、系统依赖、防火墙规则和 BBR 设置保留；如需恢复 BBR，请在卸载前使用菜单 12 → 6。' 'Removed. Backups, unknown files, dependencies, firewall rules and BBR settings retained; restore BBR with menu 12 → 6 before uninstalling if needed.'
  exit 0
 }
 guide(){
@@ -1146,13 +1337,56 @@ guide(){
  say '证书为私密副本，外部续期后用“更新 TLS 证书”刷新；不自动签发或续期。' 'Certificates are private copies. After external renewal use Refresh TLS certificate; issuance/renewal is not automatic.'
  say '安装后输入 xr 可重新打开菜单。' 'After installation, run xr to reopen the menu.'
 }
+firewall_open(){
+ local value=${1:-} zone
+ local flags=()
+ [[ -z $value ]] || flags+=(--ports "$value")
+ helper firewall-status || return 1
+ zone=$(ask 'firewalld 区域 [回车使用默认区域；UFW 忽略]：' 'firewalld zone [Enter for default; ignored by UFW]: ') || return 1
+ [[ -z $zone ]] || flags+=(--zone "$zone")
+ warn '只向已启用的 UFW/firewalld 添加入站 TCP 放行，不改 SSH 或默认策略。请同时检查服务商安全组。' 'Adds inbound TCP allows to active UFW/firewalld only; SSH and default policies stay unchanged. Also check provider security groups.'
+ if [[ -n $value ]]; then
+  confirm "放行 TCP ${value}？" "Allow TCP $value?" || return 0
+ else
+  helper node-ports || return 1
+  confirm '放行以上全部已安装节点的 TCP 端口？' 'Allow TCP ports for all installed nodes above?' || return 0
+ fi
+ if ! helper firewall-allow "${flags[@]}"; then
+  error '防火墙操作未完成，部分放行规则可能已添加；请查看状态后重试。' 'Firewall operation incomplete; some allows may have been added. Check status before retrying.'
+  return 1
+ fi
+ say 'TCP 放行命令已完成；仍需验证区域、IPv6 规则、规则优先级及公网连接。' 'TCP allow commands completed; still verify zone, IPv6 rules, rule priority and public connectivity.'
+}
+network_menu(){
+ local choice value
+ menu '1 防火墙状态  2 放行全部节点 TCP 端口  3 放行指定 TCP 端口\n4 BBR 状态  5 启用 BBR + fq  6 恢复启用前参数  0 返回' '1 Firewall status  2 Allow all node TCP ports  3 Allow a TCP port\n4 BBR status  5 Enable BBR + fq  6 Restore previous settings  0 Back'
+ choice=$(ask '> ' '> ') || return 1
+ case $choice in
+  1) helper firewall-status;;
+  2) firewall_open;;
+  3) value=$(ask '要放行的 TCP 端口（1–65535）：' 'TCP port to allow (1–65535): ') || return 1
+     if [[ ! $value =~ ^[0-9]{1,5}$ ]] || (( 10#$value < 1 || 10#$value > 65535 )); then
+      error 'TCP 端口无效。' 'Invalid TCP port.'; return 1
+     fi
+     firewall_open "$value";;
+  4) helper bbr-status;;
+  5) warn 'BBR 调整全系统新 TCP 连接的默认拥塞控制；不保证提速，不更换内核或重启服务，也不替换现有网卡队列。' 'BBR changes the system default for new TCP connections; speed gains vary. No kernel replacement, service restart or live interface queue replacement.'
+     confirm '保存原参数并启用 BBR + fq？' 'Save previous values and enable BBR + fq?' || return 0
+     helper bbr-enable || return 1
+     helper bbr-status;;
+  6) confirm '恢复本脚本启用 BBR 前的系统参数并移除本脚本的持久化文件？' 'Restore values saved before enabling BBR and remove the managed persistence file?' || return 0
+     helper bbr-restore || return 1
+     helper bbr-status;;
+  0) return 0;; *) return 1;;
+ esac
+}
 main_menu(){
  while :; do
   printf '%s\n' '============================================================'
   printf '%sSKYBYTE Xray Manager v%s%s\n' "$CYAN" "$VERSION" "$RESET"
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
-  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n0. Exit'
+  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n0. Exit'
   local choice
   choice=$(ask '请选择：' 'Choose: ') || return 0
   case $choice in
@@ -1160,7 +1394,8 @@ main_menu(){
    2) show_nodes;; 3) qr_nodes || true;; 4) service_menu || true;; 5) edit_nodes || true;;
    6) update_core || error '核心更新失败，已保留或回退原核心。' 'Core update failed; previous core retained or restored.';;
    7) make_backup || true;; 8) restore_backup || error '恢复失败，原配置已保留或回退。' 'Restore failed; previous configuration retained or restored.';;
-   9) guide;; 10) choose_language || true;; 11) uninstall || error '卸载未完成。' 'Uninstall did not complete.';; 0) return 0;;
+   9) guide;; 10) choose_language || true;; 11) uninstall || error '卸载未完成。' 'Uninstall did not complete.';;
+   12) network_menu || error '网络设置未完成，具体原因见上方提示。' 'Network settings did not complete; see the reason above.';; 0) return 0;;
    *) warn '选项无效。' 'Invalid option.';;
   esac
  done
