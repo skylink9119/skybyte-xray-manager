@@ -31,7 +31,9 @@ elif cmd=='restart':
  if x['fail_restart']: x['fail_restart']=False;x['active']=False;result=1
  else: x['active']=True
 elif cmd=='start': x['active']=True
-elif cmd=='stop': x['active']=False
+elif cmd=='stop':
+ if x.get('fail_stop'): result=1
+ else: x['active']=False
 elif cmd=='enable': x['enabled']=True
 elif cmd=='disable': x['enabled']=False
 p.write_text(json.dumps(x));sys.exit(result)
@@ -191,11 +193,13 @@ sys.exit(100 if 'update' in sys.argv else 0)
         self.assertNotEqual(result.returncode,0)
         self.assertEqual(len(json.loads(log.read_text())),1)
 
-    def uninstall_fixture(self,foreign=False):
-        self.installed()
+    def uninstall_fixture(self,foreign=False,installed=True):
+        if installed: self.installed()
         lib=self.base/'lib';lib.mkdir()
         (lib/'.owner').write_text(core.OWNER)
-        binary=lib/'xray';binary.write_text('#!/usr/bin/env bash\nexit 0\n');binary.chmod(0o700)
+        binary=lib/'xray'
+        if installed:
+            binary.write_text('#!/usr/bin/env bash\nexit 0\n');binary.chmod(0o700)
         (lib/'manager.sh').write_text((PROJECT/'xray-manager.sh').read_text())
         shortcut=self.base/'xr'
         shortcut.write_text('foreign command' if foreign else '#!/usr/bin/env bash\n# SKYBYTE Xray Manager shortcut v1\nexec bash '+str(lib/'manager.sh')+' "$@"\n')
@@ -214,6 +218,32 @@ sys.exit(100 if 'update' in sys.argv else 0)
         result=self.shell('uninstall <<< yes')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(shortcut.read_text(),'foreign command')
+
+    def test_uninstall_without_nodes_or_unit_removes_manager_and_keeps_backup(self):
+        shortcut = self.uninstall_fixture(installed=False)
+        note = self.root/'my-notes'; note.write_text('keep this')
+        config = self.root/'config.json'; config.write_text('unmanaged configuration')
+        result = self.shell('uninstall <<< YES')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(shortcut.exists())
+        self.assertFalse((self.base/'lib/manager.sh').exists())
+        self.assertTrue(list((self.root/'backups').glob('*.tar.gz')))
+        self.assertEqual(note.read_text(), 'keep this')
+        self.assertEqual(config.read_text(), 'unmanaged configuration')
+        self.assertNotIn('stop', self.state()['history'])
+        self.assertNotIn('disable', self.state()['history'])
+
+    def test_uninstall_stop_failure_keeps_manager_and_configuration(self):
+        shortcut = self.uninstall_fixture()
+        original = (self.root/'state.json').read_bytes()
+        self.set_controller(active=True, fail_stop=True)
+        result = self.shell('uninstall <<< YES')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(shortcut.exists())
+        self.assertTrue((self.base/'lib/manager.sh').exists())
+        self.assertEqual((self.root/'state.json').read_bytes(), original)
+        self.assertTrue(self.state()['active'])
+        self.assertNotIn('disable', self.state()['history'])
 
 
 if __name__=='__main__': unittest.main()

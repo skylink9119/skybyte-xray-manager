@@ -28,7 +28,7 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.11**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.12**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Nodes
 
@@ -47,10 +47,10 @@ Configure IPv4/IPv6 binding, public client address, ports, names and XHTTP paths
 Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and arm64. Run the complete command in the VPS root terminal:
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.11/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.12/install.sh)
 ```
 
-The installer downloads the matching manager and verifies its release SHA256 before installation. After installation, including after a new SSH login, reopen it with:
+The installer downloads the matching manager and verifies its release SHA256 before installation. Installer and payload versions must match; a newer or unrecognized installed manager is retained. Equal-version reinstallation is supported. After installation, including after a new SSH login, reopen it with:
 
 ```bash
 xr
@@ -93,7 +93,7 @@ The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality
 
 ## Manager self-update
 
-Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for YES before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.11 installer once to obtain this menu.
+Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for YES before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.12 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 
@@ -179,6 +179,8 @@ XRAY_BIN=/absolute/path/to/verified/xray python3 -m unittest discover -s tests -
 Local validation uses the digest-verified official Darwin/arm64 core, including real authenticated Vision, XHTTP-Reality, verified XHTTP-TLS and packet-up origin connections. Service policy tests use a disposable systemctl controller, not a real systemd boot. Local packet-up does not prove a public CDN works.
 
 Ubuntu 24.04, Debian 12 and Debian 13 GitHub Actions definitions are included. Local results and Linux CI results are reported separately. Real VPS boot, provider firewall, public CDN and GUI client imports still require validation.
+
+The main menu reuses the sing-box project's SKYBYTE ASCII logo with the Xray project name, retaining terminal color and `NO_COLOR` behavior. See the [maintenance review](docs/REVIEW.md) (Chinese) for reproduced fixes and prioritized improvements.
 
 SKYBYTE Manager · [Subscribe to the SKYBYTE YouTube channel](https://www.youtube.com/@SKYBYTE9119).
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.12 — 2026-10-19
+
+- Reuse the sing-box project's SKYBYTE ASCII logo in the Xray main menu, retaining bilingual text and NO_COLOR handling.
+- Reject already-installed protocols and stopped managed-node port conflicts in read-only preflight, before target probes or core preparation.
+- Refuse installer downgrades, mismatched payload versions and unknown installed versions before replacing files.
+- Allow uninstalling the manager before any nodes or service unit exist, retaining backups and unknown files and stopping on failures for an existing owned service.
+- Record the maintenance review and prioritize node diagnostics, runtime status, certificate expiry visibility and real VPS acceptance checks.
+
 ## 0.1.11 — 2026-10-19
 
 - Default new XHTTP/Reality nodes to TCP 443 instead of 8443, retaining manual port selection and occupied-port checks.
