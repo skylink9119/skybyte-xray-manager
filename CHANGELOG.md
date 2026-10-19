@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Group firewall menu actions as 1–5 and BBR actions as 6–8, with one action per line and updated recovery references.
+- Add UFW submenu 3 to purge its package and rule configuration, including residual configuration after package removal, with explicit confirmation and matching read-only preflight.
+- Fix empty optional firewall arguments under Bash 3.2 when allowing all node ports.
+- Verify the purged package state, report partial cleanup failures, and cover cancellation, disable failures, config-only cleanup and bilingual menu dispatch without changing the host firewall.
+
 ## 0.1.7 — 2026-10-19
 
 - Add menu 12 → 8 for disabling UFW or removing only its package while retaining rule configuration, with targeted warnings and explicit confirmation.

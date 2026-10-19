@@ -188,26 +188,47 @@ class NetworkMenuTests(TemporaryFixture):
 
     def test_custom_port_confirmation_and_cancellation_in_both_languages(self):
         for language in ['zh', 'en']:
-            result, calls = self.shell('3\n8443\npublic\nYES\n', language)
+            result, calls = self.shell('4\n8443\npublic\nYES\n', language)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('firewall-allow --ports 8443 --zone public', calls)
-            result, calls = self.shell('3\n8443\n\nno\n', language)
+            result, calls = self.shell('4\n8443\n\nno\n', language)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(any(c.startswith('firewall-allow') for c in calls))
 
     def test_invalid_tcp_port_refused_before_firewall_operation(self):
         for value in ['0', '65536', '443;id', '', '99999999999999999999']:
-            result, calls = self.shell('3\n'+value+'\n')
+            result, calls = self.shell('4\n'+value+'\n')
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(calls)
 
     def test_bbr_requires_confirmation(self):
-        result, calls = self.shell('5\nno\n')
+        result, calls = self.shell('7\nno\n')
         self.assertEqual(result.returncode, 0); self.assertFalse(calls)
-        result, calls = self.shell('5\nYES\n')
+        result, calls = self.shell('7\nYES\n')
         self.assertEqual(result.returncode, 0); self.assertEqual(calls, ['bbr-enable', 'bbr-status'])
-        result, calls = self.shell('6\nYES\n')
+        result, calls = self.shell('8\nYES\n')
         self.assertEqual(result.returncode, 0); self.assertEqual(calls, ['bbr-restore', 'bbr-status'])
+
+    def test_grouped_menu_and_renumbered_status_and_all_ports_in_both_languages(self):
+        for language, labels in [('zh', ['防火墙', '1 查看防火墙状态', '2 安装并启用 UFW',
+                '3 放行全部节点 TCP 端口', '4 放行指定 TCP 端口', '5 停用/卸载 UFW',
+                'BBR', '6 查看 BBR 状态', '7 启用 BBR + fq', '8 恢复启用前参数', '0 返回']),
+                ('en', ['Firewall', '1 Show firewall status', '2 Install and enable UFW',
+                '3 Allow all node TCP ports', '4 Allow a TCP port', '5 Disable/remove UFW',
+                'BBR', '6 Show BBR status', '7 Enable BBR + fq', '8 Restore previous settings', '0 Back'])]:
+            result, calls = self.shell('0\n', language)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(calls)
+            lines = result.stdout.splitlines()
+            positions = [lines.index(label) for label in labels]
+            self.assertEqual(positions, sorted(positions))
+            result, calls = self.shell('1\n', language)
+            self.assertEqual(calls, ['firewall-status'])
+            result, calls = self.shell('6\n', language)
+            self.assertEqual(calls, ['bbr-status'])
+            result, calls = self.shell('3\n\nYES\n', language)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls, ['firewall-status', 'node-ports', 'firewall-allow'])
 
     def test_node_port_preview_contains_no_credentials(self):
         core.ensure_owned(self.root, True)
@@ -348,7 +369,7 @@ if network_menu; then exit 0; else exit 1; fi
 
     def test_install_then_enable_after_confirmation_in_both_languages(self):
         for language in ['zh','en']:
-            result, calls = self.shell('7\n\n80 443\nYES\n', language=language)
+            result, calls = self.shell('2\n\n80 443\nYES\n', language=language)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertIn('apt-get install -y ufw', calls)
             setup = 'firewall-setup --ssh-ports 2222 --ports 80 443'
@@ -356,12 +377,12 @@ if network_menu; then exit 0; else exit 1; fi
             self.assertLess(calls.index('apt-get install -y ufw'), calls.index(setup))
 
     def test_cancellation_does_not_install_or_enable(self):
-        result, calls = self.shell('7\n\n\nno\n')
+        result, calls = self.shell('2\n\n\nno\n')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertFalse(any(c.startswith('apt-') or c.startswith('firewall-setup --') for c in calls))
 
     def test_failed_package_install_does_not_enable(self):
-        result, calls = self.shell('7\n\n\nYES\n', apt_fail=True)
+        result, calls = self.shell('2\n\n\nYES\n', apt_fail=True)
         self.assertNotEqual(result.returncode,0)
         self.assertFalse(any(c.startswith('firewall-setup --') for c in calls))
 
@@ -514,7 +535,8 @@ class UFWRemovalTests(unittest.TestCase):
             elif not self.stays_active: self.active = False
         elif args == ['dpkg-query','-W','-f=${Status}','ufw']:
             output = self.package if self.package else ''; code = 0 if self.package else 1
-        elif args == ['dpkg','--no-act','--remove','ufw']: code = 1 if self.dpkg_fail else 0
+        elif args in (['dpkg','--no-act','--remove','ufw'], ['dpkg','--no-act','--purge','ufw']):
+            code = 1 if self.dpkg_fail else 0
         else: raise AssertionError(args)
         if check and code: raise subprocess.CalledProcessError(code,args)
         return subprocess.CompletedProcess(args,code,stdout=output,stderr='')
@@ -544,7 +566,9 @@ class UFWRemovalTests(unittest.TestCase):
 
     def test_dependency_failure_refuses_before_disabling(self):
         self.dpkg_fail = True
-        with self.assertRaisesRegex(ValueError,'未改变'): core.ufw_remove_plan()
+        for purge in [False, True]:
+            with self.subTest(purge=purge), self.assertRaisesRegex(ValueError,'未改变'):
+                core.ufw_remove_plan(purge)
         self.assertTrue(self.active)
         self.assertFalse(any(a[0] == 'ufw' for a in self.calls))
 
@@ -555,23 +579,47 @@ class UFWRemovalTests(unittest.TestCase):
             self.assertEqual(len(self.calls),1)
 
     def test_held_partial_or_missing_files_are_refused(self):
-        for package in ['hold ok installed','install ok unpacked','install reinstreq half-installed']:
+        for package in ['hold ok installed','hold ok config-files','install ok unpacked','install reinstreq half-installed']:
             self.package = package
-            with self.subTest(package=package), self.assertRaises(ValueError): core.ufw_remove_plan()
+            for purge in [False, True]:
+                with self.subTest(package=package,purge=purge), self.assertRaises(ValueError):
+                    core.ufw_remove_plan(purge)
         self.package = 'install ok installed'; self.missing = True
-        with self.assertRaisesRegex(ValueError,'文件缺失'): core.ufw_remove_plan()
+        for purge in [False, True]:
+            with self.subTest(purge=purge), self.assertRaisesRegex(ValueError,'文件缺失'):
+                core.ufw_remove_plan(purge)
         self.assertTrue(self.active)
+
+    def test_purge_preflight_targets_only_ufw_without_disabling(self):
+        self.assertEqual(core.ufw_remove_plan(purge=True),'ready')
+        self.assertEqual(self.calls,[['dpkg-query','-W','-f=${Status}','ufw'],
+                                    ['dpkg','--no-act','--purge','ufw']])
+        self.assertTrue(self.active)
+
+    def test_purge_config_only_works_without_ufw_binary(self):
+        self.package = 'deinstall ok config-files'; self.missing = True
+        self.assertEqual(core.ufw_package_state(),'config-files')
+        self.assertEqual(core.ufw_remove_plan(purge=True),'config-files')
+        self.assertIn(['dpkg','--no-act','--purge','ufw'],self.calls)
+        self.assertFalse(any(a[0] == 'ufw' for a in self.calls))
+
+    def test_purge_absent_is_noop_and_query_error_is_not_absence(self):
+        self.package = ''
+        self.assertEqual(core.ufw_remove_plan(purge=True),'absent')
+        self.assertEqual(len(self.calls),1)
+        with mock.patch.object(core,'system_command',return_value=subprocess.CompletedProcess([],2,stdout='',stderr='')):
+            with self.assertRaisesRegex(ValueError,'无法读取'): core.ufw_remove_plan(purge=True)
 
 
 class UFWRemovalMenuTests(TemporaryFixture):
-    def shell(self,inputs,language='zh',remove_fail=False,disable_fail=False,plan='ready',verify='absent'):
+    def shell(self,inputs,language='zh',remove_fail=False,disable_fail=False,plan='ready',verify='absent',plan_fail=False):
         log = self.base/'remove.log'
         script = '''source "$1"
 helper(){
  printf '%s\\n' "$*" >> "$REMOVE_LOG"
  case $1 in
   ufw-state) printf 'active';;
-  ufw-remove-plan) printf '%s' "$REMOVE_PLAN";;
+  ufw-remove-plan) [[ $PLAN_FAIL == no ]] || return 1; printf '%s' "$REMOVE_PLAN";;
   ufw-disable) [[ $DISABLE_FAIL == no ]] || return 1; printf 'disabled';;
   ufw-package-state) printf '%s' "$REMOVE_VERIFY";;
   *) return 1;;
@@ -584,36 +632,37 @@ if network_menu; then exit 0; else exit 1; fi
         result = subprocess.run(['bash','-c',script,'test',str(PROJECT/'xray-manager.sh'),language],
             input=inputs,text=True,capture_output=True,env={**os.environ,'REMOVE_LOG':str(log),
             'REMOVE_PLAN':plan,'REMOVE_VERIFY':verify,'REMOVE_FAIL':'yes' if remove_fail else 'no',
-            'DISABLE_FAIL':'yes' if disable_fail else 'no'})
+            'DISABLE_FAIL':'yes' if disable_fail else 'no','PLAN_FAIL':'yes' if plan_fail else 'no'})
         calls = log.read_text().splitlines() if log.exists() else []
         if log.exists(): log.unlink()
         return result,calls
 
     def test_remove_after_verified_disable_in_both_languages(self):
         for language in ['zh','en']:
-            result,calls = self.shell('8\n2\nYES\n',language=language)
+            result,calls = self.shell('5\n2\nYES\n',language=language,verify='config-files')
             self.assertEqual(result.returncode,0,result.stderr)
-            self.assertEqual(calls,['ufw-state','ufw-remove-plan','ufw-disable','dpkg --remove ufw','ufw-package-state'])
+            self.assertEqual(calls,['ufw-remove-plan','ufw-state','ufw-disable','dpkg --remove ufw','ufw-package-state'])
 
     def test_only_disable_does_not_remove_package(self):
-        result,calls = self.shell('8\n1\nYES\n')
+        result,calls = self.shell('5\n1\nYES\n')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(calls,['ufw-state','ufw-disable'])
 
     def test_cancel_does_not_disable_or_remove(self):
-        for option in ['1','2']:
-            result,calls = self.shell('8\n'+option+'\nno\n')
+        for option in ['1','2','3']:
+            result,calls = self.shell('5\n'+option+'\nno\n')
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertNotIn('ufw-disable',calls)
             self.assertFalse(any(c.startswith('dpkg ') for c in calls))
 
     def test_disable_failure_prevents_removal(self):
-        result,calls = self.shell('8\n2\nYES\n',disable_fail=True)
-        self.assertNotEqual(result.returncode,0)
-        self.assertFalse(any(c.startswith('dpkg ') for c in calls))
+        for option in ['2','3']:
+            result,calls = self.shell('5\n'+option+'\nYES\n',disable_fail=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertFalse(any(c.startswith('dpkg ') for c in calls))
 
     def test_removal_failure_does_not_claim_success_or_reenable(self):
-        result,calls = self.shell('8\n2\nYES\n',language='en',remove_fail=True)
+        result,calls = self.shell('5\n2\nYES\n',language='en',remove_fail=True)
         self.assertNotEqual(result.returncode,0)
         self.assertIn('package removal did not complete',result.stderr)
         self.assertNotIn('ufw-package-state',calls)
@@ -621,14 +670,54 @@ if network_menu; then exit 0; else exit 1; fi
         self.assertEqual(calls.count('ufw-disable'),1)
 
     def test_unverified_removal_is_not_success(self):
-        result,calls = self.shell('8\n2\nYES\n',verify='installed')
+        result,calls = self.shell('5\n2\nYES\n',verify='installed')
         self.assertNotEqual(result.returncode,0)
         self.assertIn('ufw-package-state',calls)
 
     def test_absent_package_does_not_disable(self):
-        result,calls = self.shell('8\n2\n',plan='absent')
+        result,calls = self.shell('5\n2\n',plan='absent')
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(calls,['ufw-state','ufw-remove-plan'])
+        self.assertEqual(calls,['ufw-remove-plan'])
+
+    def test_purge_after_verified_disable_in_both_languages(self):
+        for language in ['zh','en']:
+            result,calls = self.shell('5\n3\nYES\n',language=language)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(calls,['ufw-remove-plan --purge','ufw-state','ufw-disable',
+                                    'dpkg --purge ufw','ufw-package-state'])
+            self.assertIn('不可恢复' if language == 'zh' else 'cannot be undone',result.stdout)
+
+    def test_purge_remaining_configuration_skips_missing_binary_and_disable(self):
+        for language in ['zh','en']:
+            result,calls = self.shell('5\n3\nYES\n',language=language,plan='config-files')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(calls,['ufw-remove-plan --purge','dpkg --purge ufw','ufw-package-state'])
+
+    def test_purge_preflight_failure_or_unknown_plan_makes_no_changes(self):
+        for settings in [{'plan_fail':True}, {'plan':'unknown'}]:
+            result,calls = self.shell('5\n3\nYES\n',**settings)
+            self.assertNotEqual(result.returncode,0)
+            self.assertEqual(calls,['ufw-remove-plan --purge'])
+
+    def test_purge_failure_reports_partial_state_without_success_or_reenable(self):
+        for plan in ['ready','config-files']:
+            result,calls = self.shell('5\n3\nYES\n',language='en',plan=plan,remove_fail=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('purge did not complete',result.stderr)
+            self.assertIn('some files may already be removed',result.stderr)
+            self.assertNotIn('ufw-package-state',calls)
+            self.assertNotIn('configuration purged',result.stdout)
+            self.assertFalse(any('enable' in c for c in calls))
+
+    def test_purge_retained_configuration_is_not_success(self):
+        result,calls = self.shell('5\n3\nYES\n',verify='config-files',language='en')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('could not be verified',result.stderr)
+
+    def test_purge_absent_is_noop(self):
+        result,calls = self.shell('5\n3\n',plan='absent')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(calls,['ufw-remove-plan --purge'])
 
 
 @unittest.skipUnless(shutil.which('dpkg') and shutil.which('ufw'), 'Requires distro dpkg and ufw')
@@ -636,5 +725,12 @@ class DpkgRemovalPlanIntegrationTests(unittest.TestCase):
     def test_real_dpkg_no_act_does_not_remove_installed_ufw(self):
         before = core.ufw_package_state()
         self.assertEqual(before,'installed')
-        self.assertEqual(core.ufw_remove_plan(),'ready')
-        self.assertEqual(core.ufw_package_state(),before)
+        config = Path('/etc/ufw/ufw.conf').read_bytes()
+        for purge in [False,True]:
+            with self.subTest(purge=purge):
+                result = subprocess.run([os.sys.executable,str(PROJECT/'src/core.py'),'ufw-remove-plan',
+                    *(['--purge'] if purge else [])],capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stdout.strip(),'ready')
+                self.assertEqual(core.ufw_package_state(),before)
+                self.assertEqual(Path('/etc/ufw/ufw.conf').read_bytes(),config)
