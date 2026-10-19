@@ -72,6 +72,8 @@ bash install.sh
 
 安装时，“客户端连接地址”必填：填写这台 VPS 的公网 IP 或指向它的域名；它与 Reality 握手域名是两项不同的设置。带方括号的选项才可回车使用默认值。脚本会先检查地址与监听端口；若提示 TCP 443 已被占用（例如已有 sing-box 或网站），请选择其他空闲端口并放行对应 TCP 规则，不要直接停止已有服务。`TLSv1.3 / h2` 只表示握手目标检查通过，节点还需完成配置与服务启动。
 
+开发版在安装 TCP/Reality 或 XHTTP/Reality 时提供握手域名预设：Microsoft（`www.microsoft.com`，默认）、Apple（`www.apple.com`）、Amazon（`www.amazon.com`）、Cloudflare（`www.cloudflare.com`）和 Google（`dl.google.com`）。选择编号后，握手目标默认跟随为所选域名的 `:443`，仍可手动修改；也可选择自定义或直接输入域名，输入 0 返回。每次仍从 VPS 检查所选目标的 TLS 1.3、HTTP/2 和证书，检查失败不继续下载核心或写入节点配置。预设不保证所有线路可达。
+
 ## 菜单
 
 | 选项 | 操作 |

@@ -185,6 +185,33 @@ PY
  helper finalize --stage "$stage" || return 1
  accepted=1
 )
+choose_reality_sni(){
+ local choice selected
+ menu 'Reality 握手域名\n1 Microsoft  www.microsoft.com（默认）\n2 Apple      www.apple.com\n3 Amazon     www.amazon.com\n4 Cloudflare www.cloudflare.com\n5 Google     dl.google.com\n6 自定义域名\n0 返回' 'Reality handshake name\n1 Microsoft  www.microsoft.com (default)\n2 Apple      www.apple.com\n3 Amazon     www.amazon.com\n4 Cloudflare www.cloudflare.com\n5 Google     dl.google.com\n6 Custom domain\n0 Back' >&2
+ while :; do
+  choice=$(ask '选择 [1]（也可直接输入域名）：' 'Choose [1] (or enter a domain directly): ') || return 1
+  case ${choice:-1} in
+   1) selected=www.microsoft.com;;
+   2) selected=www.apple.com;;
+   3) selected=www.amazon.com;;
+   4) selected=www.cloudflare.com;;
+   5) selected=dl.google.com;;
+   6) while :; do
+       selected=$(ask '自定义 Reality 握手域名（必填）：' 'Custom Reality handshake domain (required): ') || return 1
+       [[ $selected =~ [^[:space:]] ]] && break
+       warn '请填写握手域名。' 'Enter a handshake domain.' >&2
+      done;;
+   0) return 0;;
+   *) if [[ $choice =~ ^[0-9]+$ ]]; then
+       warn '选项无效，请输入 1–6、0 或域名。' 'Invalid option; enter 1–6, 0 or a domain.' >&2
+       continue
+      fi
+      selected=$choice;;
+  esac
+  printf '%s\n' "$selected"
+  return 0
+ done
+}
 install_node(){
  local choice kind node_name node_port host sni target listen path='' mode=auto cert='' private_key='' stage
  local flags=()
@@ -211,7 +238,8 @@ install_node(){
   if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
   warn 'CDN 的 DNS、HTTPS 端口及回源 TLS 验证须在提供商后台配置。' 'Configure CDN DNS, supported HTTPS port and verified origin TLS at your provider.'
  else
-  sni=$(ask 'Reality 握手域名 [www.microsoft.com]：' 'Reality handshake name [www.microsoft.com]: ') || return 1; sni=${sni:-www.microsoft.com}
+  sni=$(choose_reality_sni) || return 1
+  [[ -n $sni ]] || return 0
   target=$(ask "握手目标 [$sni:443]：" "Handshake target [$sni:443]: ") || return 1; target=${target:-$sni:443}
   say '检查目标 TLS 1.3 与 HTTP/2……' 'Checking target TLS 1.3 and HTTP/2…'
   helper probe --target "$target" --sni "$sni" || return 1

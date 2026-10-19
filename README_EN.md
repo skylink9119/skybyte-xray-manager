@@ -89,6 +89,8 @@ Permit actual TCP ports in the system firewall and provider security group. Menu
 
 Use **5 → 4** to edit an installed node's client address, TCP listen port and XHTTP path. Enter keeps each value; leaving every field blank returns without restarting. Vision has no path prompt. UUIDs, Reality keys, Short IDs, TLS SNI, certificates and other nodes are retained. Input, managed port conflicts and changed port availability are checked before staging. Server configuration, links, Base64 and Xray client JSON are regenerated together. Active services restart with rollback on failure; stopped services stay stopped. Re-import clients from menu 2 and allow the new TCP port; CDN users must also check provider port support.
 
+The development installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality: Microsoft (`www.microsoft.com`, default), Apple (`www.apple.com`), Amazon (`www.amazon.com`), Cloudflare (`www.cloudflare.com`) and Google (`dl.google.com`). The target defaults to the selected domain on `:443` and remains editable. Choose Custom or enter a domain directly; 0 returns. Each selection still undergoes the VPS TLS 1.3, HTTP/2 and certificate check before core download or node configuration changes. Reachability depends on the VPS route.
+
 ## Manager self-update
 
 Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for YES before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.10 installer once to obtain this menu.

@@ -177,6 +177,100 @@ class TemporaryFixture(unittest.TestCase):
     def tearDown(self): self.temp.cleanup()
 
 
+class RealityHandshakeMenuTests(TemporaryFixture):
+    def shell(self, inputs, language='zh', probe_fail=False):
+        log = self.base/'handshake-menu.log'
+        script = '''source "$1"
+helper(){
+ printf '%s\\n' "$*" >> "$HANDSHAKE_LOG"
+ case $1 in
+  preflight) return 0;;
+  probe) [[ $HANDSHAKE_PROBE_FAIL == no ]];;
+  prepare) printf '/mock-stage';;
+  *) return 1;;
+ esac
+}
+ensure_binary(){ printf 'ensure-binary\\n' >> "$HANDSHAKE_LOG"; }
+apply_stage(){ printf 'apply %s\\n' "$*" >> "$HANDSHAKE_LOG"; }
+show_nodes(){ :; }
+LANGUAGE=$2
+install_node
+'''
+        result = subprocess.run(['bash', '-c', script, 'test', str(PROJECT/'xray-manager.sh'), language],
+            input=inputs, capture_output=True, text=True, timeout=10,
+            env={**os.environ, 'HANDSHAKE_LOG':str(log), 'NO_COLOR':'1',
+                 'HANDSHAKE_PROBE_FAIL':'yes' if probe_fail else 'no'})
+        calls = log.read_text().splitlines() if log.exists() else []
+        log.unlink(missing_ok=True)
+        return result, calls
+
+    def inputs(self, selection, target='', kind='1'):
+        return kind+'\n\n\n\n203.0.113.10\n'+selection+target+'\n'+('\n\n' if kind == '2' else '')+'YES\n'
+
+    def test_enter_keeps_microsoft_default_in_both_languages(self):
+        for language in ['zh','en']:
+            result, calls = self.shell(self.inputs('\n'), language)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('probe --target www.microsoft.com:443 --sni www.microsoft.com', calls)
+            prepared = next(call for call in calls if call.startswith('prepare '))
+            self.assertIn('--sni www.microsoft.com', prepared)
+            self.assertIn('--target www.microsoft.com:443', prepared)
+            self.assertTrue(calls[0].startswith('preflight '))
+            self.assertLess(calls.index('probe --target www.microsoft.com:443 --sni www.microsoft.com'), calls.index('ensure-binary'))
+
+    def test_preset_sni_and_target_reach_both_reality_transports(self):
+        for language in ['zh','en']:
+            for kind, selection, host in [('1','2\n','www.apple.com'),('2','4\n','www.cloudflare.com')]:
+                result, calls = self.shell(self.inputs(selection, kind=kind), language)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('probe --target '+host+':443 --sni '+host, calls)
+                prepared = next(call for call in calls if call.startswith('prepare '))
+                self.assertIn('--sni '+host, prepared)
+                self.assertIn('--target '+host+':443', prepared)
+                self.assertIn('apply /mock-stage yes', calls)
+
+    def test_custom_domain_and_target_override_are_preserved(self):
+        for language in ['zh','en']:
+            result, calls = self.shell(self.inputs('6\ncustom.example.com\n', 'origin.example.com:8443'), language)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('probe --target origin.example.com:8443 --sni custom.example.com', calls)
+            prepared = next(call for call in calls if call.startswith('prepare '))
+            self.assertIn('--sni custom.example.com', prepared)
+            self.assertIn('--target origin.example.com:8443', prepared)
+
+    def test_direct_domain_input_still_works(self):
+        result, calls = self.shell(self.inputs('direct.example.com\n'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('probe --target direct.example.com:443 --sni direct.example.com', calls)
+
+    def test_invalid_number_and_blank_custom_domain_reprompt(self):
+        result, calls = self.shell(self.inputs('99\n6\n\ncustom.example.com\n'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('选项无效', result.stderr)
+        self.assertIn('请填写握手域名', result.stderr)
+        self.assertIn('probe --target custom.example.com:443 --sni custom.example.com', calls)
+        self.assertEqual(sum(call.startswith('probe ') for call in calls), 1)
+
+    def test_back_and_failed_probe_stop_before_core_or_configuration_changes(self):
+        result, calls = self.shell(self.inputs('0\n'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(all(call.startswith('preflight ') for call in calls))
+        for kind in ['1','2']:
+            result, calls = self.shell(self.inputs('2\n', kind=kind), probe_fail=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('probe --target www.apple.com:443 --sni www.apple.com', calls)
+            self.assertFalse(any(call.startswith(('ensure-binary','prepare ','apply ')) for call in calls))
+
+    def test_tls_certificate_flow_does_not_show_reality_presets(self):
+        result, calls = self.shell('3\n\n\n\n203.0.113.10\ntls.example.com\n/cert.pem\n/key.pem\n\n\n\nYES\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('Microsoft', result.stdout+result.stderr)
+        self.assertFalse(any(call.startswith('probe ') for call in calls))
+        prepared = next(call for call in calls if call.startswith('prepare '))
+        self.assertIn('--kind xhttp-tls', prepared)
+        self.assertIn('--cert /cert.pem --key /key.pem', prepared)
+
+
 class InstallationInputTests(TemporaryFixture):
     def cli(self, *arguments):
         return subprocess.run(['bash', '-c', 'source "$1"; helper preflight "${@:2}"',
