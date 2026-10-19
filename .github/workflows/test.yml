@@ -39,3 +39,14 @@ jobs:
           python3 src/core.py download --file "$PWD/work/xray" --asset Xray-linux-64.zip
           unset SKYBYTE_GITHUB_TOKEN
           XRAY_BIN="$PWD/work/xray" python3 -m unittest discover -s tests -v
+  firewall-coexistence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install firewall tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ufw nftables iproute2 util-linux
+      - name: Real firewall checks in private mount and network namespaces
+        run: sudo env SKYBYTE_FIREWALL_NAMESPACE_TEST=1 unshare --mount --net --fork python3 scripts/check_firewall_namespace.py

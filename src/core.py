@@ -28,7 +28,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -762,7 +762,7 @@ def netfilter_label(value):
     return re.sub(r"[^A-Za-z0-9_.:-]", "?", str(value))[:64]
 
 
-def nft_conflict(text):
+def nft_objects(text):
     try:
         data = json.loads(text)
     except ValueError:
@@ -773,10 +773,113 @@ def nft_conflict(text):
         if not isinstance(item, dict) or len(item) != 1:
             raise ValueError("Unknown nft object / 无法识别 nft 对象")
         kind, value = next(iter(item.items()))
-        if kind == "metainfo":
-            continue
         if not isinstance(value, dict):
             raise ValueError("Unknown nft object fields / 无法识别 nft 对象字段")
+    return data["nftables"]
+
+
+def nft_fail2ban_objects(items):
+    """Recognize an isolated, early input chain containing only TCP address bans."""
+    members = [item for item in items if any(value.get("family") == "inet" and
+               value.get("name" if kind == "table" else "table") == "f2b-table"
+               for kind, value in item.items())]
+    if not members:
+        return []
+    tables = [item["table"] for item in members if "table" in item]
+    chains = [item["chain"] for item in members if "chain" in item]
+    set_values = [item["set"] for item in members if "set" in item]
+    if any(not isinstance(value.get("name"), str) for value in set_values):
+        return []
+    sets = {value["name"]: value for value in set_values}
+    rules = [item["rule"] for item in members if "rule" in item]
+    if (len(tables) != 1 or len(chains) != 1 or not sets or not rules or
+            len(members) != 2 + len(sets) + len(rules)):
+        return []
+    if set(tables[0]) - {"family", "name", "handle", "comment"}:
+        return []
+    chain = chains[0]
+    if (set(chain) - {"family", "table", "name", "handle", "type", "hook", "prio", "policy", "comment"} or
+            type(chain.get("prio")) is not int or
+            (chain.get("name"), chain.get("type"), chain.get("hook"), chain.get("prio"), chain.get("policy")) !=
+            ("f2b-chain", "filter", "input", -1, "accept")):
+        return []
+    for name, value in sets.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"addr6?-set-[A-Za-z0-9_.-]+", name) or
+                value.get("type") != ("ipv6_addr" if name.startswith("addr6-") else "ipv4_addr") or
+                set(value) - {"family", "table", "name", "handle", "type", "flags", "elem", "comment",
+                              "size", "timeout", "gc-interval"} or
+                not isinstance(value.get("flags", []), list) or
+                any(flag not in ("interval", "timeout") for flag in value.get("flags", [])) or
+                not isinstance(value.get("elem", []), list)):
+            return []
+    referenced = set()
+    for rule in rules:
+        if (rule.get("chain") != "f2b-chain" or
+                set(rule) - {"family", "table", "chain", "handle", "expr", "comment"}):
+            return []
+        expressions = rule.get("expr")
+        if not isinstance(expressions, list) or len(expressions) not in (3, 4):
+            return []
+        verdict = expressions[-1]
+        if verdict != {"drop": None}:
+            if (not isinstance(verdict, dict) or set(verdict) != {"reject"} or
+                    verdict["reject"] not in [{"type": family, "expr": "port-unreachable"}
+                                               for family in ("icmp", "icmpv6", "icmpx")]):
+                return []
+        matches = []
+        for expression in expressions[:-1]:
+            if not isinstance(expression, dict) or len(expression) != 1:
+                return []
+            if "counter" in expression:
+                if (not isinstance(expression["counter"], dict) or
+                        set(expression["counter"]) - {"packets", "bytes"}):
+                    return []
+            elif "match" in expression:
+                matches.append(expression["match"])
+            else:
+                return []
+        if len(matches) != 2 or any(not isinstance(match, dict) or
+                set(match) != {"op", "left", "right"} or match["op"] != "==" for match in matches):
+            return []
+        port_matches = [match for match in matches if match["left"] == {"payload": {"protocol": "tcp", "field": "dport"}}]
+        if len(port_matches) != 1:
+            return []
+        ports = port_matches[0]["right"]
+        ports = ports.get("set") if isinstance(ports, dict) and set(ports) == {"set"} else [ports]
+        if not isinstance(ports, list) or not ports or any(type(number) is not int or not 1 <= number <= 65535 for number in ports):
+            return []
+        source = next(match for match in matches if match is not port_matches[0])
+        reference = source["right"]
+        if not isinstance(reference, str) or not reference.startswith("@") or reference[1:] not in sets:
+            return []
+        address_set = sets[reference[1:]]
+        protocol = "ip6" if address_set["type"] == "ipv6_addr" else "ip"
+        if source["left"] != {"payload": {"protocol": protocol, "field": "saddr"}}:
+            return []
+        referenced.add(reference[1:])
+    return members if referenced == set(sets) else []
+
+
+def nft_fail2ban_signature(items):
+    # Ban elements and counters change independently under the Fail2ban daemon.
+    result = set()
+    for item in nft_fail2ban_objects(items):
+        kind, value = next(iter(item.items()))
+        value = {key: data for key, data in value.items() if key not in ("handle", "elem")}
+        if kind == "rule":
+            value["expr"] = [expression for expression in value["expr"] if "counter" not in expression]
+        result.add(json.dumps({kind: value}, sort_keys=True))
+    return result
+
+
+def nft_inspect(text):
+    items = nft_objects(text)
+    preserved = nft_fail2ban_objects(items)
+    signature = nft_fail2ban_signature(preserved)
+    for item in items:
+        kind, value = next(iter(item.items()))
+        if kind == "metainfo" or item in preserved:
+            continue
         location = "/".join(netfilter_label(value.get(field, "?")) for field in ("family", "table", "chain" if kind == "rule" else "name"))
         if kind == "table":
             if not all(isinstance(value.get(field), str) for field in ("family", "name")):
@@ -787,11 +890,27 @@ def nft_conflict(text):
                 raise ValueError("Invalid nft chain / nft 链信息异常")
             if "hook" in value or "policy" in value:
                 if value.get("policy") != "accept":
-                    return "chain " + location + " policy=" + netfilter_label(value.get("policy", "unknown"))
+                    return "chain " + location + " policy=" + netfilter_label(value.get("policy", "unknown")), signature
             continue
         # Rules (including ACCEPT/NAT), sets, flowtables and unknown state remain guarded.
-        return netfilter_label(kind) + " " + location
-    return None
+        return netfilter_label(kind) + " " + location, signature
+    return None, signature
+
+
+def nft_conflict(text):
+    return nft_inspect(text)[0]
+
+
+def verify_fail2ban_preserved(signature):
+    if not signature:
+        return
+    try:
+        current = nft_fail2ban_signature(nft_objects(system_command(["nft", "-j", "list", "ruleset"]).stdout))
+        if signature <= current:
+            return
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    raise ValueError("Fail2ban preservation not verified; inspect its status before retrying / 未确认原有 Fail2ban 封禁结构保留，请先检查其状态后重试")
 
 
 def iptables_conflict(text):
@@ -819,7 +938,8 @@ def firewall_setup_check():
     status = firewall_status()
     if status["firewalld"] == "active" or status["ufw"] == "active":
         raise ValueError("A firewall is already active; use the port allow menu / 已有防火墙启用，请使用端口放行菜单，不重复初始化")
-    # Do not replace rules belonging to Docker, native nftables or other managers.
+    preserved = set()
+    # Preserve a validated independent Fail2ban input chain; guard all other rules.
     for command in ("nft", "iptables-save", "ip6tables-save", "iptables-legacy-save", "ip6tables-legacy-save"):
         if not shutil.which(command):
             continue
@@ -828,10 +948,14 @@ def firewall_setup_check():
             rules = system_command(args).stdout
         except (OSError, subprocess.SubprocessError):
             raise ValueError("Cannot inspect " + command + "; UFW setup stopped / 无法检查 " + command + "，已停止 UFW 初始化，请检查权限与内核支持") from None
-        conflict = nft_conflict(rules) if command == "nft" else iptables_conflict(rules)
+        if command == "nft":
+            conflict, preserved = nft_inspect(rules)
+        else:
+            conflict = iptables_conflict(rules)
         if conflict:
             raise ValueError("Existing netfilter state: " + command + " / " + conflict +
                              "; inspect it before enabling UFW / 检测到已有规则或策略，来源如上；请先核对，不自动清空或覆盖")
+    return preserved
 
 
 def firewall_setup_plan(root, ssh_ports, extra_ports):
@@ -855,7 +979,7 @@ def firewall_setup_plan(root, ssh_ports, extra_ports):
 
 def firewall_setup(root, ssh_ports, extra_ports, config=Path("/etc/default/ufw")):
     ssh, others = firewall_setup_plan(root, ssh_ports, extra_ports)
-    firewall_setup_check()
+    preserved = firewall_setup_check()
     if not shutil.which("ufw"):
         raise ValueError("Install UFW first / 请先安装 UFW")
     text = checked_path(config).read_text()
@@ -874,14 +998,17 @@ def firewall_setup(root, ssh_ports, extra_ports, config=Path("/etc/default/ufw")
         ufw_command(["--force", "enable"])
         if firewall_status()["ufw"] != "active":
             raise ValueError("UFW did not become active / UFW 未成功启用")
+        verify_fail2ban_preserved(preserved)
     except BaseException as error:
         try:
             ufw_command(["--force", "disable"])
             if firewall_status()["ufw"] != "inactive":
                 raise ValueError("UFW still active")
+            verify_fail2ban_preserved(preserved)
         except (OSError, ValueError, subprocess.SubprocessError):
-            raise ValueError("UFW enable/rollback incomplete; check from provider console / UFW 启用或回退未完成，请通过服务商控制台检查；已保留规则") from error
+            raise ValueError("UFW enable/rollback incomplete; check UFW and Fail2ban from provider console / UFW 启用或回退未完成，请通过服务商控制台检查 UFW 与 Fail2ban 状态；配置文件保留") from error
         raise
+    return bool(preserved)
 
 
 BBR_VALUES = {"net.core.default_qdisc": "fq", "net.ipv4.tcp_congestion_control": "bbr"}
@@ -1138,7 +1265,8 @@ def main():
         print(ufw_remove_plan(options.purge))
         return
     if options.command == "firewall-setup-check":
-        firewall_setup_check()
+        if firewall_setup_check():
+            print("Compatible Fail2ban TCP bans detected; will preserve them / 检测到可共存的独立 Fail2ban TCP 封禁，将保留现有防护与封禁地址")
         return
     if options.command == "firewall-setup-plan":
         ssh, others = firewall_setup_plan(Path(options.root), options.ssh_ports, options.ports)
@@ -1146,7 +1274,8 @@ def main():
         print("Other TCP / 其他 TCP: " + (", ".join(map(str, others)) or "none / 无"))
         return
     if options.command == "firewall-setup":
-        firewall_setup(Path(options.root), options.ssh_ports, options.ports)
+        if firewall_setup(Path(options.root), options.ssh_ports, options.ports):
+            print("Fail2ban structure preserved; existing bans still apply / 已核对原有 Fail2ban 封禁结构仍在；已有封禁仍可能阻止连接")
         return
     if options.command == "manager-latest":
         tag = manager_release()["tag_name"]
