@@ -656,16 +656,59 @@ def ufw_command(arguments, check=True):
         raise ValueError("UFW executable missing; check package/PATH / 找不到 UFW 可执行文件，请检查安装与 PATH") from None
 
 
+def ufw_state():
+    if not shutil.which("ufw"):
+        return "absent"
+    result = ufw_command(["status"])
+    if result.stdout.startswith("Status: active"):
+        return "active"
+    if result.stdout.startswith("Status: inactive"):
+        return "inactive"
+    raise ValueError("Cannot determine UFW status / 无法识别 UFW 状态")
+
+
+def ufw_disable():
+    if ufw_state() == "absent":
+        return "absent"
+    ufw_command(["--force", "disable"])
+    if ufw_state() != "inactive":
+        raise ValueError("UFW disable not verified; package removal stopped / 未确认 UFW 已停用，停止卸载软件包")
+    return "disabled"
+
+
+def ufw_package_state():
+    result = system_command(["dpkg-query", "-W", "-f=${Status}", "ufw"], check=False)
+    if result.returncode == 1:
+        return "absent"
+    if result.returncode != 0:
+        raise ValueError("Cannot read UFW package status / 无法读取 UFW 软件包状态")
+    status = result.stdout.strip()
+    if status == "install ok installed":
+        return "installed"
+    fields = status.split()
+    if len(fields) == 3 and fields[1] == "ok" and fields[2] in ("not-installed", "config-files"):
+        return "absent"
+    raise ValueError("UFW package is held or incomplete; fix package state first / UFW 软件包被保留或状态不完整，请先修复软件包状态")
+
+
+def ufw_remove_plan():
+    if ufw_package_state() == "absent":
+        return "absent"
+    if not shutil.which("ufw"):
+        raise ValueError("UFW package files are missing; repair it before removal / UFW 软件包文件缺失，请先修复后再停用和卸载")
+    try:
+        # --no-act MUST precede --remove; check dependencies without removing anything.
+        system_command(["dpkg", "--no-act", "--remove", "ufw"])
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError("UFW removal dependency/lock check failed; no firewall changes / UFW 卸载依赖或锁检查失败，未改变防火墙；请检查依赖 UFW 的软件及软件包锁") from None
+    return "ready"
+
+
 def firewall_status():
     status = {"ufw": "unavailable", "firewalld": "unavailable"}
-    if shutil.which("ufw"):
-        result = ufw_command(["status"])
-        if result.stdout.startswith("Status: active"):
-            status["ufw"] = "active"
-        elif result.stdout.startswith("Status: inactive"):
-            status["ufw"] = "inactive"
-        else:
-            raise ValueError("Cannot determine UFW status / 无法识别 UFW 状态")
+    ufw = ufw_state()
+    if ufw != "absent":
+        status["ufw"] = ufw
     if shutil.which("firewall-cmd"):
         result = system_command(["firewall-cmd", "--state"], check=False)
         if result.returncode == 0 and result.stdout.strip() == "running":
@@ -1047,7 +1090,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup"])
+                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -1079,6 +1122,18 @@ def main():
         options.port = options.port if options.port is not None else "443"
         options.address = options.address if options.address is not None else ""
         options.path = options.path if options.path is not None else ""
+    if options.command == "ufw-state":
+        print(ufw_state())
+        return
+    if options.command == "ufw-disable":
+        print(ufw_disable())
+        return
+    if options.command == "ufw-package-state":
+        print(ufw_package_state())
+        return
+    if options.command == "ufw-remove-plan":
+        print(ufw_remove_plan())
+        return
     if options.command == "firewall-setup-check":
         firewall_setup_check()
         return

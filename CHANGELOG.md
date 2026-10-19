@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add menu 12 → 8 for disabling UFW or removing only its package while retaining rule configuration, with targeted warnings and explicit confirmation.
+- Check package state/dependencies before disabling, verify inactivity before removal, refuse forced dependency changes, and report partial removal failures without automatic re-enable.
+- Add isolated state/order/cancellation/failure regressions and a real dpkg no-act integration check that leaves the CI UFW package installed.
+
 ## 0.1.6 — 2026-10-19
 
 - Fix first-run UFW rule insertion with prepend instead of insert 1; add real distribution frontend compatibility checks with an isolated backend.

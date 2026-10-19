@@ -693,16 +693,59 @@ def ufw_command(arguments, check=True):
         raise ValueError("UFW executable missing; check package/PATH / 找不到 UFW 可执行文件，请检查安装与 PATH") from None
 
 
+def ufw_state():
+    if not shutil.which("ufw"):
+        return "absent"
+    result = ufw_command(["status"])
+    if result.stdout.startswith("Status: active"):
+        return "active"
+    if result.stdout.startswith("Status: inactive"):
+        return "inactive"
+    raise ValueError("Cannot determine UFW status / 无法识别 UFW 状态")
+
+
+def ufw_disable():
+    if ufw_state() == "absent":
+        return "absent"
+    ufw_command(["--force", "disable"])
+    if ufw_state() != "inactive":
+        raise ValueError("UFW disable not verified; package removal stopped / 未确认 UFW 已停用，停止卸载软件包")
+    return "disabled"
+
+
+def ufw_package_state():
+    result = system_command(["dpkg-query", "-W", "-f=${Status}", "ufw"], check=False)
+    if result.returncode == 1:
+        return "absent"
+    if result.returncode != 0:
+        raise ValueError("Cannot read UFW package status / 无法读取 UFW 软件包状态")
+    status = result.stdout.strip()
+    if status == "install ok installed":
+        return "installed"
+    fields = status.split()
+    if len(fields) == 3 and fields[1] == "ok" and fields[2] in ("not-installed", "config-files"):
+        return "absent"
+    raise ValueError("UFW package is held or incomplete; fix package state first / UFW 软件包被保留或状态不完整，请先修复软件包状态")
+
+
+def ufw_remove_plan():
+    if ufw_package_state() == "absent":
+        return "absent"
+    if not shutil.which("ufw"):
+        raise ValueError("UFW package files are missing; repair it before removal / UFW 软件包文件缺失，请先修复后再停用和卸载")
+    try:
+        # --no-act MUST precede --remove; check dependencies without removing anything.
+        system_command(["dpkg", "--no-act", "--remove", "ufw"])
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError("UFW removal dependency/lock check failed; no firewall changes / UFW 卸载依赖或锁检查失败，未改变防火墙；请检查依赖 UFW 的软件及软件包锁") from None
+    return "ready"
+
+
 def firewall_status():
     status = {"ufw": "unavailable", "firewalld": "unavailable"}
-    if shutil.which("ufw"):
-        result = ufw_command(["status"])
-        if result.stdout.startswith("Status: active"):
-            status["ufw"] = "active"
-        elif result.stdout.startswith("Status: inactive"):
-            status["ufw"] = "inactive"
-        else:
-            raise ValueError("Cannot determine UFW status / 无法识别 UFW 状态")
+    ufw = ufw_state()
+    if ufw != "absent":
+        status["ufw"] = ufw
     if shutil.which("firewall-cmd"):
         result = system_command(["firewall-cmd", "--state"], check=False)
         if result.returncode == 0 and result.stdout.strip() == "running":
@@ -1084,7 +1127,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup"])
+                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -1116,6 +1159,18 @@ def main():
         options.port = options.port if options.port is not None else "443"
         options.address = options.address if options.address is not None else ""
         options.path = options.path if options.path is not None else ""
+    if options.command == "ufw-state":
+        print(ufw_state())
+        return
+    if options.command == "ufw-disable":
+        print(ufw_disable())
+        return
+    if options.command == "ufw-package-state":
+        print(ufw_package_state())
+        return
+    if options.command == "ufw-remove-plan":
+        print(ufw_remove_plan())
+        return
     if options.command == "firewall-setup-check":
         firewall_setup_check()
         return
@@ -1666,9 +1721,53 @@ install_firewall(){
  say 'UFW 已启用；请在保留当前 SSH 会话时，新开一个 SSH 连接验证访问。' 'UFW enabled; keep this SSH session and verify access from a new SSH connection.'
  helper firewall-status
 }
+remove_firewall(){
+ local choice current plan result
+ menu '仅操作 UFW：\n1 仅停用，保留软件包和规则配置\n2 卸载软件包，保留规则配置\n0 返回' 'UFW only:\n1 Disable only; keep package and rule configuration\n2 Remove package; keep rule configuration\n0 Back'
+ choice=$(ask '> ' '> ') || return 1
+ case $choice in 0) return 0;; 1|2) :;; *) return 1;; esac
+ current=$(helper ufw-state) || return 1
+ say "当前 UFW 状态：$current" "Current UFW state: $current"
+ if [[ $choice == 2 ]]; then
+  plan=$(helper ufw-remove-plan) || return 1
+  if [[ $plan == absent ]]; then
+   say 'UFW 软件包未安装，无需卸载；残留配置保持原样。' 'UFW package is not installed; nothing to remove. Any residual configuration is retained.'
+   return 0
+  fi
+ elif [[ $current == absent ]]; then
+  say '未找到 UFW，无需停用。' 'UFW was not found; nothing to disable.'
+  return 0
+ fi
+ warn '停用后 UFW 的主机入站保护将不再生效，原先被阻止的端口可能可达。此操作仅针对 UFW；其他防火墙和服务商安全组仍各自生效。节点、SSH 配置和 BBR 参数保留。' 'Disabling UFW removes its host filtering protection; previously blocked ports may become reachable. Only UFW is targeted; other firewalls and provider rules remain separate. Node, SSH configuration and BBR settings are retained.'
+ if [[ $choice == 2 ]]; then
+  confirm '先停用并验证 UFW，再卸载 UFW 软件包（保留配置）？' 'Disable and verify UFW, then remove its package while keeping configuration?' || return 0
+ else
+  confirm '停用 UFW（保留软件包和配置）？' 'Disable UFW while keeping its package and configuration?' || return 0
+ fi
+ result=$(helper ufw-disable) || return 1
+ if [[ $result != disabled ]]; then
+  error '没有确认 UFW 停用成功，未继续卸载。' 'UFW disable was not confirmed; package removal was not attempted.'
+  return 1
+ fi
+ if [[ $choice == 1 ]]; then
+  say 'UFW 已停用，软件包和规则配置保留。' 'UFW disabled; its package and rule configuration are retained.'
+  return 0
+ fi
+ # Remove only ufw; no dependency force, purge, autoremove or other package targets.
+ if ! dpkg --remove ufw; then
+  error 'UFW 已停用，但软件包卸载未完成；请检查上方 dpkg 提示。不会自动重新启用。' 'UFW is disabled, but package removal did not complete; inspect the dpkg output above. It will not be re-enabled automatically.'
+  return 1
+ fi
+ result=$(helper ufw-package-state) || return 1
+ if [[ $result != absent ]]; then
+  error 'UFW 已停用，但尚未确认软件包卸载完成。' 'UFW is disabled, but package removal could not be verified.'
+  return 1
+ fi
+ say 'UFW 软件包已卸载，规则配置保留。未卸载 iptables/nftables 或其他防火墙，也未执行全局规则清空。' 'UFW package removed; rule configuration retained. iptables/nftables and other firewalls were not removed, and no global rule flush was performed.'
+}
 network_menu(){
  local choice value
- menu '1 防火墙状态  2 放行全部节点 TCP 端口  3 放行指定 TCP 端口\n4 BBR 状态  5 启用 BBR + fq  6 恢复启用前参数\n7 安装并启用 UFW  0 返回' '1 Firewall status  2 Allow all node TCP ports  3 Allow a TCP port\n4 BBR status  5 Enable BBR + fq  6 Restore previous settings\n7 Install and enable UFW  0 Back'
+ menu '1 防火墙状态  2 放行全部节点 TCP 端口  3 放行指定 TCP 端口\n4 BBR 状态  5 启用 BBR + fq  6 恢复启用前参数\n7 安装并启用 UFW  8 停用/卸载 UFW  0 返回' '1 Firewall status  2 Allow all node TCP ports  3 Allow a TCP port\n4 BBR status  5 Enable BBR + fq  6 Restore previous settings\n7 Install and enable UFW  8 Disable/remove UFW  0 Back'
  choice=$(ask '> ' '> ') || return 1
  case $choice in
   1) helper firewall-status;;
@@ -1687,6 +1786,7 @@ network_menu(){
      helper bbr-restore || return 1
      helper bbr-status;;
   7) install_firewall;;
+  8) remove_firewall;;
   0) return 0;; *) return 1;;
  esac
 }
