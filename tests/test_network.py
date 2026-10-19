@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Isolated firewall and sysctl contracts; never change the host network."""
 import copy
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -174,6 +176,28 @@ class BBRTests(TemporaryFixture):
         with mock.patch.object(core, 'rollback_network_values', return_value=False):
             with self.assertRaisesRegex(ValueError, '回退未完成'): core.bbr_change(True, self.path)
         self.assertEqual(core.bbr_previous(self.path), self.original)
+
+    def test_status_distinguishes_running_bbr_from_available_or_saved_settings(self):
+        for algorithm, available, managed, expected in [
+                ('cubic', 'reno cubic', False, '未开启 BBR 加速'),
+                ('cubic', 'reno cubic bbr', True, '未开启 BBR 加速'),
+                ('bbr', 'reno cubic bbr', False, '已开启 BBR 加速')]:
+            self.values['net.ipv4.tcp_congestion_control'] = algorithm
+            self.available = available
+            if managed: self.path.write_text(core.bbr_content(self.original))
+            else: self.path.unlink(missing_ok=True)
+            before = copy.deepcopy(self.values); self.commands.clear(); output = io.StringIO()
+            with self.subTest(algorithm=algorithm, managed=managed), \
+                    mock.patch.object(core, 'BBR_PATH', self.path), \
+                    mock.patch('sys.argv', ['core.py', 'bbr-status']), contextlib.redirect_stdout(output):
+                core.main()
+            lines = output.getvalue().strip().splitlines()
+            self.assertIn(expected, lines[0])
+            self.assertIn('Current algorithm: '+algorithm, output.getvalue())
+            self.assertIn('Default qdisc: fq_codel', output.getvalue())
+            self.assertNotIn('\033', output.getvalue())
+            self.assertEqual(self.values, before)
+            self.assertTrue(all(args[:2] == ['sysctl', '-n'] for args in self.commands))
 
 
 class NetworkMenuTests(TemporaryFixture):

@@ -1313,9 +1313,17 @@ def main():
         print(firewall_allow(numbers, options.zone))
         return
     if options.command == "bbr-status":
-        print(json_text(network_values()))
-        print("Available / 可用: " + system_command(["sysctl", "-n", "net.ipv4.tcp_available_congestion_control"]).stdout.strip())
-        print("Managed / 本脚本管理: " + ("yes" if bbr_previous(BBR_PATH) is not None else "no"))
+        current = network_values()
+        enabled = current["net.ipv4.tcp_congestion_control"] == "bbr"
+        summary = "已开启 BBR 加速 / BBR acceleration enabled" if enabled else "未开启 BBR 加速 / BBR acceleration not enabled"
+        color, reset = "", ""
+        if sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
+            color, reset = ("\033[1;32m" if enabled else "\033[1;33m"), "\033[0m"
+        print("\n" + color + "===== " + summary + " =====" + reset + "\n")
+        print("当前拥塞控制 / Current algorithm: " + current["net.ipv4.tcp_congestion_control"])
+        print("当前默认队列 / Default qdisc: " + current["net.core.default_qdisc"])
+        print("可用算法 / Available algorithms: " + system_command(["sysctl", "-n", "net.ipv4.tcp_available_congestion_control"]).stdout.strip())
+        print("本脚本管理 / Managed by this manager: " + ("是 / yes" if bbr_previous(BBR_PATH) is not None else "否 / no"))
         return
     if options.command in ("bbr-enable", "bbr-restore"):
         bbr_change(options.command == "bbr-enable")
