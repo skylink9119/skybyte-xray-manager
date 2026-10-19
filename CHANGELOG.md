@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4 — 2026-10-19
+
+- Add menu 13 for stable-release manager updates with version preview, explicit confirmation, pinned repository/tag, release-asset and manifest SHA256 verification, syntax/version/self-check validation and atomic replacement.
+- Preserve a previous-script backup and restore it on post-install validation failure; refuse foreign paths and downgrades against both running and installed versions.
+- Preserve node credentials, core, services, firewall and BBR settings; exit the old menu after successful update. Add isolated integrity, replacement and bilingual menu regressions.
+
 ## 0.1.3 — 2026-10-19
 
 - Add menu 12 for active UFW/firewalld status and explicit inbound TCP allows for managed or selected ports, without firewall enable/disable/reset or global reload.
