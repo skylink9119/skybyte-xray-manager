@@ -31,7 +31,7 @@ ask(){
  printf '%s' "$result"
 }
 confirmed(){ [[ $1 =~ ^[Yy][Ee][Ss]$ ]]; }
-confirm(){ local answer; answer=$(ask "$1 [YES]: " "$2 [YES]: ") || return 1; confirmed "$answer"; }
+confirm(){ local answer; answer=$(ask "$1（输入 YES 确认；回车取消）：" "$2 (type YES to confirm; Enter to cancel): ") || return 1; confirmed "$answer"; }
 separator(){ printf '%s\n' '------------------------------------------------------------'; }
 
 helper(){ python3 - "$@" <<'SKYBYTE_PYTHON'
@@ -1666,7 +1666,10 @@ install_node(){
   mode=${selected:-$mode}
  fi
  warn '请放行实际 TCP 端口，可用菜单 12 管理系统防火墙；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port using menu 12 for the host firewall; validation does not prove public/CDN connectivity.'
- confirm '安装并启动所选节点？' 'Install and start the selected node?' || return 1
+ if ! confirm '安装并启动所选节点？' 'Install and start the selected node?'; then
+  say '已取消节点安装，未下载核心或更改节点配置。' 'Node installation cancelled; no core download or node configuration changes.'
+  return 0
+ fi
  ensure_binary || { error '核心准备失败，具体原因见上方提示。' 'Core preparation failed; see the reason above.'; return 1; }
  flags+=(--kind "$kind" --port "$node_port" --listen "$listen" --address "$host" --sni "$sni" --name "$node_name")
  if [[ $kind == xhttp-tls ]]; then flags+=(--cert "$cert" --key "$private_key")

@@ -261,6 +261,22 @@ install_node
             self.assertIn('probe --target www.apple.com:443 --sni www.apple.com', calls)
             self.assertFalse(any(call.startswith(('ensure-binary','prepare ','apply ')) for call in calls))
 
+    def test_install_confirmation_cancellation_and_yes_have_clear_results(self):
+        for language in ['zh','en']:
+            for answer in ['', 'no', 'yes']:
+                inputs = self.inputs('2\n').removesuffix('YES\n')+answer+'\n'
+                result, calls = self.shell(inputs, language)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('输入 YES 确认；回车取消' if language == 'zh' else
+                              'type YES to confirm; Enter to cancel', result.stderr)
+                self.assertNotIn('[YES]', result.stderr)
+                if answer == 'yes':
+                    self.assertIn('ensure-binary', calls)
+                    self.assertIn('apply /mock-stage yes', calls)
+                else:
+                    self.assertIn('已取消节点安装' if language == 'zh' else 'Node installation cancelled', result.stdout)
+                    self.assertFalse(any(call.startswith(('ensure-binary','prepare ','apply ')) for call in calls))
+
     def test_tls_certificate_flow_does_not_show_reality_presets(self):
         result, calls = self.shell('3\n\n\n\n203.0.113.10\ntls.example.com\n/cert.pem\n/key.pem\n\n\n\nYES\n')
         self.assertEqual(result.returncode, 0, result.stderr)
