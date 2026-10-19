@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.4 — 2026-10-19
 
 - Add menu 13 for stable-release manager updates with version preview, explicit confirmation, pinned repository/tag, release-asset and manifest SHA256 verification, syntax/version/self-check validation and atomic replacement.
 - Preserve a previous-script backup and restore it on post-install validation failure; refuse foreign paths and downgrades against both running and installed versions.
