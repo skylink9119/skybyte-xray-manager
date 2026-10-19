@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.12 — 2026-10-19
 
 - Reuse the sing-box project's SKYBYTE ASCII logo in the Xray main menu, retaining bilingual text and NO_COLOR handling.
 - Reject already-installed protocols and stopped managed-node port conflicts in read-only preflight, before target probes or core preparation.

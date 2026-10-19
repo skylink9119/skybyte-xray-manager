@@ -28,7 +28,7 @@
 
 ---
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.11**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.12**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
 ## 三种节点
 
@@ -47,10 +47,10 @@
 需要 **root、Ubuntu/Debian 和 systemd**；二进制支持 amd64、arm64。在 VPS 的 root 终端执行完整命令：
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.11/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.12/install.sh)
 ```
 
-安装入口会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装后，重新登录 SSH 也可以输入下面的快捷命令：
+安装入口会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装入口核对自身与主脚本版本，拒绝覆盖更高或无法识别的已安装版本；相同版本可重装。安装后，重新登录 SSH 也可以输入下面的快捷命令：
 
 ```bash
 xr
@@ -68,7 +68,7 @@ bash install.sh
 
 独立仓库：[skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager)。正式发布代码位于 `main`。发布页提供安装入口、自包含主脚本、完整源码包与 `SHA256SUMS`；完整包可直接本地安装，单独下载入口时会联网获取主脚本。
 
-首次启动选择语言。开发版主菜单使用与 sing-box 项目相同的 SKYBYTE ASCII Logo，并显示 Xray 项目名称。菜单和提问绿色加粗，节点信息黄色，链接和错误红色，警告黄色；非终端或 `NO_COLOR=1` 可关闭颜色。操作确认需要明确输入 YES，不区分大小写；回车取消。取消节点安装会正常返回菜单，不显示安装失败。
+首次启动选择语言。主菜单使用与 sing-box 项目相同的 SKYBYTE ASCII Logo，并显示 Xray 项目名称。菜单和提问绿色加粗，节点信息黄色，链接和错误红色，警告黄色；非终端或 `NO_COLOR=1` 可关闭颜色。操作确认需要明确输入 YES，不区分大小写；回车取消。取消节点安装会正常返回菜单，不显示安装失败。
 
 安装时，“客户端连接地址”必填：填写这台 VPS 的公网 IP 或指向它的域名；它与 Reality 握手域名是两项不同的设置。带方括号的选项才可回车使用默认值。脚本会先检查地址与监听端口；若提示 TCP 443 已被占用（例如已有 sing-box 或网站），请选择其他空闲端口并放行对应 TCP 规则，不要直接停止已有服务。`TLSv1.3 / h2` 只表示握手目标检查通过，节点还需完成配置与服务启动。
 
@@ -95,7 +95,7 @@ bash install.sh
 
 ## 更新管理脚本
 
-菜单 **13** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 YES 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.11 安装命令更新一次，之后即可使用菜单 13。
+菜单 **13** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 YES 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.12 安装命令更新一次，之后即可使用菜单 13。
 
 下载固定仓库、指定版本的主脚本与 `SHA256SUMS`，核对 GitHub 发布附件的 SHA256 及清单，并检查 Bash 语法、版本和自检结果。通过后在同一目录原子替换，旧脚本保留为 `manager.previous.sh`；替换后自检失败时回退，若回退无法写入则明确报错并保留备份。拒绝未托管目录、异常文件或符号链接。网络/API 限额、附件缺失、校验错误和写入权限不足会停止更新；不会改写节点配置、UUID、密钥、语言、Xray 核心、服务、防火墙或 BBR 参数。
 
