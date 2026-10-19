@@ -727,6 +727,64 @@ def firewall_allow(numbers, zone=""):
     return "firewalld / " + zone
 
 
+def netfilter_label(value):
+    # Kernel object names can contain control characters; never emit them verbatim.
+    return re.sub(r"[^A-Za-z0-9_.:-]", "?", str(value))[:64]
+
+
+def nft_conflict(text):
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise ValueError("Cannot parse nft JSON; UFW setup stopped / 无法解析 nft JSON，已停止 UFW 初始化") from None
+    if not isinstance(data, dict) or not isinstance(data.get("nftables"), list):
+        raise ValueError("Unknown nft JSON structure / 无法识别 nft JSON 结构")
+    for item in data["nftables"]:
+        if not isinstance(item, dict) or len(item) != 1:
+            raise ValueError("Unknown nft object / 无法识别 nft 对象")
+        kind, value = next(iter(item.items()))
+        if kind == "metainfo":
+            continue
+        if not isinstance(value, dict):
+            raise ValueError("Unknown nft object fields / 无法识别 nft 对象字段")
+        location = "/".join(netfilter_label(value.get(field, "?")) for field in ("family", "table", "chain" if kind == "rule" else "name"))
+        if kind == "table":
+            if not all(isinstance(value.get(field), str) for field in ("family", "name")):
+                raise ValueError("Invalid nft table / nft 表信息异常")
+            continue
+        if kind == "chain":
+            if not all(isinstance(value.get(field), str) for field in ("family", "table", "name")):
+                raise ValueError("Invalid nft chain / nft 链信息异常")
+            if "hook" in value or "policy" in value:
+                if value.get("policy") != "accept":
+                    return "chain " + location + " policy=" + netfilter_label(value.get("policy", "unknown"))
+            continue
+        # Rules (including ACCEPT/NAT), sets, flowtables and unknown state remain guarded.
+        return netfilter_label(kind) + " " + location
+    return None
+
+
+def iptables_conflict(text):
+    table = "?"
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line == "COMMIT":
+            continue
+        if line.startswith("*"):
+            table = netfilter_label(line[1:])
+            continue
+        fields = line.split()
+        if line.startswith(":") and len(fields) == 3 and fields[1] in ("ACCEPT", "-") and re.fullmatch(r"\[[0-9]+:[0-9]+\]", fields[2]):
+            # With no rules anywhere, an unreferenced empty user chain has no effect.
+            continue
+        if line.startswith(":"):
+            return table + "/" + netfilter_label(fields[0][1:]) + " policy=" + netfilter_label(fields[1] if len(fields) > 1 else "unknown")
+        if line.startswith("-A ") and len(fields) >= 2:
+            return "rule " + table + "/" + netfilter_label(fields[1])
+        return "unrecognized entry / 无法识别条目 " + table
+    return None
+
+
 def firewall_setup_check():
     status = firewall_status()
     if status["firewalld"] == "active" or status["ufw"] == "active":
@@ -735,18 +793,15 @@ def firewall_setup_check():
     for command in ("nft", "iptables-save", "ip6tables-save", "iptables-legacy-save", "ip6tables-legacy-save"):
         if not shutil.which(command):
             continue
-        args = [command, "list", "ruleset"] if command == "nft" else [command]
+        args = [command, "-j", "list", "ruleset"] if command == "nft" else [command]
         try:
             rules = system_command(args).stdout
         except (OSError, subprocess.SubprocessError):
             raise ValueError("Cannot inspect " + command + "; UFW setup stopped / 无法检查 " + command + "，已停止 UFW 初始化，请检查权限与内核支持") from None
-        if command == "nft":
-            custom = bool(rules.strip())
-        else:
-            custom = any(line.startswith("-A ") or (line.startswith(":") and line.split()[1] != "ACCEPT")
-                         for line in rules.splitlines())
-        if custom:
-            raise ValueError("Existing netfilter rules detected; configure the firewall manually / 检测到已有 netfilter 规则（可能属于 Docker 或其他防火墙），请手动配置，不覆盖")
+        conflict = nft_conflict(rules) if command == "nft" else iptables_conflict(rules)
+        if conflict:
+            raise ValueError("Existing netfilter state: " + command + " / " + conflict +
+                             "; inspect it before enabling UFW / 检测到已有规则或策略，来源如上；请先核对，不自动清空或覆盖")
 
 
 def firewall_setup_plan(root, ssh_ports, extra_ports):

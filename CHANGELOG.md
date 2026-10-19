@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fix UFW initialization false positives from empty nft/iptables tables, default ACCEPT chains and unreferenced empty user chains, including tables created by iptables-nft inspection.
+- Inspect nft JSON and report the exact command/table/chain or object that blocks setup; keep actual rules, DROP policies and unknown state protected.
+- Add regressions for repeated inspection, ACCEPT/NAT/DROP conflicts, malformed output and safe diagnostic labels.
+
 ## 0.1.5 — 2026-10-19
 
 - Add menu 12 → 7 to install missing UFW via APT and explicitly initialize/enable it after previewing confirmed SSH, current SSH session, node and extra TCP ports.
