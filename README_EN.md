@@ -28,7 +28,7 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.2**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.3**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Nodes
 
@@ -47,7 +47,7 @@ Configure IPv4/IPv6 binding, public client address, ports, names and XHTTP paths
 Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and arm64. Run the complete command in the VPS root terminal:
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.2/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.3/install.sh)
 ```
 
 The installer downloads the matching manager and verifies its release SHA256 before installation. After installation, including after a new SSH login, reopen it with:
@@ -82,10 +82,25 @@ The client connection address is required: enter this VPS's public IP or a domai
 6. Update verified official stable Xray-core
 7/8. Back up/restore configuration
 9/10/11. Guide, language and uninstall
+12. Firewall / BBR
 
-Permit actual TCP ports in the system firewall and provider security group. The script does not automatically change UFW, SSH ports or cloud security groups.
+Permit actual TCP ports in the system firewall and provider security group. Menu 12 manages host TCP allows; provider security groups remain manual.
 
 Use **5 → 4** to edit an installed node's client address, TCP listen port and XHTTP path. Enter keeps each value; leaving every field blank returns without restarting. Vision has no path prompt. UUIDs, Reality keys, Short IDs, TLS SNI, certificates and other nodes are retained. Input, managed port conflicts and changed port availability are checked before staging. Server configuration, links, Base64 and Xray client JSON are regenerated together. Active services restart with rollback on failure; stopped services stay stopped. Re-import clients from menu 2 and allow the new TCP port; CDN users must also check provider port support.
+
+## Firewall and BBR
+
+Use **12 → Firewall / BBR**:
+
+- **1**: show UFW/firewalld status plus firewalld default/active zones.
+- **2/3**: allow all installed node TCP ports or one selected port (1–65535), with a port preview and YES confirmation. Select a firewalld zone or press Enter for the default; check that it covers the public interface. Exactly one supported firewall must already be active. This does not install, enable, disable, reset or flush firewalls, change policies/SSH, or remove ports. Runtime and permanent firewalld ports are updated separately without a global reload. On failure some allows may remain; inspect status before retrying.
+- **4/5/6**: show BBR status, enable BBR and the fq default, or restore previous values. Uses the existing kernel, attempting `tcp_bbr` / `sch_fq` module loading if needed; never installs a kernel. The dedicated `/etc/sysctl.d/90-skybyte-xray-bbr.conf` stores original values in a comment. Foreign, edited or symlink files are refused. Repeated enabling keeps the first snapshot. Failed application attempts rollback; incomplete rollback retains the recovery file and reports failure.
+
+BBR changes the system TCP default, primarily affecting new connections; speed gains vary. The fq default does not replace existing interface queues. Other boot configuration may override these defaults; check status after reboot. Restore removes only the managed file and reapplies saved runtime values, leaving other sysctl files unchanged. Uninstall retains firewall rules and BBR settings; use **12 → 6** first to restore BBR if desired.
+
+Host rules alone do not prove public connectivity. Check provider rules, UFW IPv6 configuration, rule ordering, firewalld zones and CDN port support. Raw nftables/iptables editing is not supported. Tests use isolated command simulators; actual VPS firewall/kernel/reboot acceptance is still required.
+
+References: [UFW](https://manpages.ubuntu.com/manpages/noble/man8/ufw.8.html), [firewalld](https://firewalld.org/documentation/man-pages/firewall-cmd.html), [Linux TCP sysctls](https://kernel.org/doc/html/latest/networking/ip-sysctl.html), [default queue discipline](https://www.kernel.org/doc/html/latest/admin-guide/sysctl/net.html).
 
 ## Domain TLS and CDN
 

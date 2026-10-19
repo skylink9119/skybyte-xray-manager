@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3 — 2026-10-19
+
+- Add menu 12 for active UFW/firewalld status and explicit inbound TCP allows for managed or selected ports, without firewall enable/disable/reset or global reload.
+- Add BBR status, existing-kernel enablement and restoration of saved runtime defaults through a guarded dedicated sysctl file; detect failed application and attempt rollback.
+- Add isolated firewall, kernel parameter and bilingual confirmation regressions; preserve TCP/Reality Vision defaults and unchanged XHTTP exports.
+
 ## 0.1.2 — 2026-10-19
 
 - Edit installed node addresses, TCP ports and XHTTP paths while preserving credentials and TLS certificates.
