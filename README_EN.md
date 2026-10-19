@@ -108,6 +108,8 @@ Use **12 → Firewall / BBR**:
 
 BBR changes the system TCP default, primarily affecting new connections; speed gains vary. The fq default does not replace existing interface queues. Other boot configuration may override these defaults; check status after reboot. Restore removes only the managed file and reapplies saved runtime values, leaving other sysctl files unchanged. Uninstall retains firewall rules and BBR settings; use **12 → 6** first to restore BBR if desired.
 
+Development builds also fix initial rule insertion: `prepend allow` handles empty IPv4/IPv6 lists, whereas `insert 1` is rejected by UFW 0.36.2 when no rules exist. UFW failures show the exact command, exit code and a filtered reason without exposing arbitrary external error details.
+
 Development builds fix false positives from empty tables by inspecting nft JSON objects. Empty tables, ACCEPT default chains and unreferenced empty user chains alone do not block initialization. Actual rules (including ACCEPT/NAT), DROP policies, sets and unrecognized state still stop initialization, with the inspecting command and table/chain/object shown. Inspection failure never flushes or bypasses rules. Earlier Docker wording was a possibility, not an identified owner.
 
 Confirm every required TCP service before enabling; unlisted services may be blocked, and extra UDP services are not handled by this setup. Keep the current SSH session and verify a second connection after activation. Keep provider console access available; command success does not prove SSH reachability.
