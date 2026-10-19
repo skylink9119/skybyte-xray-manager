@@ -28,7 +28,7 @@
 
 ---
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.1**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.2**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
 ## 三种节点
 
@@ -38,7 +38,7 @@
 | VLESS + XHTTP + Reality | XHTTP + Reality，不混入 Vision flow | 8443 | 同上，无需自己的域名证书 |
 | VLESS + XHTTP + TLS/CDN | XHTTP + TLS，默认开启验证 | 2053 | 自有域名、已有可信 fullchain 与匹配私钥 |
 
-可依次安装三种节点，每种协议一个入口、不同 TCP 端口。重复安装已存在的协议会拒绝；重命名、更新证书和核心升级保留已有 UUID 与密钥。删除后重新安装会生成新凭据。
+可依次安装三种节点，每种协议一个入口、不同 TCP 端口。重复安装已存在的协议会拒绝；编辑节点、更新证书和核心升级保留已有 UUID 与密钥。删除后重新安装会生成新凭据。
 
 支持 IPv4 或 IPv6 监听，以及自定义客户端连接地址、端口、节点名和 XHTTP 路径。支持客户端 `auto`、`packet-up`、`stream-up`、`stream-one` 模式，服务端接受兼容的模式；CDN 模式默认 `packet-up`，拒绝在该模式选择 `stream-one`。参考 [Xray 的 XHTTP 说明](https://github.com/XTLS/Xray-core/discussions/4113) 和 [Reality 文档](https://xtls.github.io/config/transports/reality.html)。
 
@@ -47,7 +47,7 @@
 需要 **root、Ubuntu/Debian 和 systemd**；二进制支持 amd64、arm64。在 VPS 的 root 终端执行完整命令：
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.1/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.2/install.sh)
 ```
 
 安装入口会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装后，重新登录 SSH 也可以输入下面的快捷命令：
@@ -80,10 +80,12 @@ bash install.sh
 | 2 | 查看节点链接与客户端导出文件 |
 | 3 | 本地生成节点二维码 |
 | 4 | 服务状态、启停、重启、配置检查与日志 |
-| 5 | 重命名、删除协议、更新 TLS 证书 |
+| 5 | 重命名、删除协议、更新 TLS 证书、修改地址/端口/路径 |
 | 6 | 校验并更新官方稳定 Xray 核心 |
 | 7 / 8 | 配置备份与恢复 |
 | 9 / 10 / 11 | 使用说明、语言、卸载 |
+
+**5 → 4**：选择已安装协议后，可修改客户端连接地址、监听 TCP 端口及 XHTTP 路径；每项回车保留原值，全部留空直接返回。Vision 不显示路径选项。UUID、Reality 密钥、Short ID、TLS SNI、证书及其他节点保持原值。修改前校验输入、托管节点端口冲突及新端口占用，校验通过后同步生成服务端配置、节点链接、Base64 和 Xray 客户端 JSON。运行中的服务会重启，失败则回退；原先停止的服务继续停止。修改后请从菜单 2 获取新链接或配置，重新导入客户端，并放行新 TCP 端口；CDN 使用者还需确认新端口受提供商支持。
 
 需要在系统防火墙和服务商安全组放行实际 TCP 端口。本脚本不自动更改 UFW、SSH 端口或服务商安全组。
 

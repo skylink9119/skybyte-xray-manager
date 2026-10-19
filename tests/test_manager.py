@@ -267,6 +267,49 @@ install_node
                 self.assertNotIn(secret, message)
 
 
+class EditTests(unittest.TestCase):
+    def test_edit_preserves_credentials_other_nodes_and_original(self):
+        for kind in core.KINDS:
+            with self.subTest(kind=kind):
+                state = {'schema': 1, 'nodes': {k: example_node(k) for k in core.KINDS}}
+                original = copy.deepcopy(state)
+                changed_port = free_port()
+                while changed_port in [n['port'] for n in state['nodes'].values()]:
+                    changed_port = free_port()
+                path = '/changed/path' if kind.startswith('xhttp') else None
+                edited = core.edit_state(state, kind, 'node.example.com', changed_port, path)
+                expected = copy.deepcopy(original)
+                expected['nodes'][kind].update(address='node.example.com', port=changed_port)
+                if path: expected['nodes'][kind]['path'] = path
+                self.assertEqual(edited, expected)
+                self.assertEqual(state, original)
+
+    def test_unchanged_port_is_not_probed(self):
+        state = {'schema': 1, 'nodes': {'vision': example_node()}}
+        with mock.patch.object(core, 'check_port', side_effect=AssertionError('current port')):
+            edited = core.edit_state(state, 'vision', '2001:db8::1', state['nodes']['vision']['port'])
+        self.assertEqual(edited['nodes']['vision']['address'], '2001:db8::1')
+
+    def test_reject_invalid_edits_and_missing_node(self):
+        state = {'schema': 1, 'nodes': {'vision': example_node(), 'xhttp-reality': example_node('xhttp-reality')}}
+        for kind, changes in [('vision', {'client_address': 'bad;id'}),
+                              ('vision', {'client_address': ''}),
+                              ('vision', {'node_port': '0'}),
+                              ('vision', {'node_port': state['nodes']['xhttp-reality']['port']}),
+                              ('vision', {'path': '/path'}),
+                              ('xhttp-reality', {'path': '/bad?query'}),
+                              ('xhttp-tls', {'client_address': 'example.com'})]:
+            with self.subTest(kind=kind, changes=changes), self.assertRaises(ValueError):
+                core.edit_state(state, kind, **changes)
+
+    def test_reject_occupied_port(self):
+        state = {'schema': 1, 'nodes': {'vision': example_node()}}
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0)); listener.listen()
+            with self.assertRaisesRegex(ValueError, '已被占用'):
+                core.edit_state(state, 'vision', node_port=listener.getsockname()[1])
+
+
 class FileTests(TemporaryFixture):
     def test_private_atomic_write(self):
         destination=self.base/'file'
@@ -420,6 +463,36 @@ class EngineTests(TemporaryFixture):
             self.assertIn(node['uuid'],filename.read_text())
         self.assertEqual(len(core.load_state(self.root)['nodes']),3)
 
+    def test_cli_edit_regenerates_valid_exports_and_preserves_certificates(self):
+        for kind in core.KINDS:
+            self.make_protocol(kind)
+        old = core.load_state(self.root)
+        tls = {n: (self.root/n).read_bytes() for n in core.tls_names(old)}
+        for kind in core.KINDS:
+            new_port = free_port()
+            while new_port in [n['port'] for n in core.load_state(self.root)['nodes'].values()]:
+                new_port = free_port()
+            args = ['--address', 'new.example.com', '--port', str(new_port)]
+            if kind.startswith('xhttp'): args += ['--path', '/new/path']
+            result = subprocess.run([os.sys.executable, str(PROJECT/'src/core.py'), 'edit',
+                '--root', str(self.root), '--unit', str(self.unit), '--binary', ENGINE, '--kind', kind, *args], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            stage = Path(result.stdout.strip())
+            self.assertEqual(core.load_state(self.root)['nodes'][kind], old['nodes'][kind])
+            core.commit(self.root, stage, Path(ENGINE), self.unit, False, False)
+            core.finalize(self.root, stage)
+            node = core.load_state(self.root)['nodes'][kind]
+            for field in set(old['nodes'][kind]) - {'address', 'port', 'path'}:
+                self.assertEqual(node[field], old['nodes'][kind][field])
+            self.assertEqual(node['address'], 'new.example.com')
+            self.assertEqual(node['port'], new_port)
+            if kind.startswith('xhttp'): self.assertEqual(node['path'], '/new/path')
+            core.engine_check(Path(ENGINE), self.root/('client-'+kind+'.json'))
+            self.assertIn(core.node_uri(kind, node), (self.root/'nodes.txt').read_text())
+            self.assertEqual(base64.b64decode((self.root/'subscription-base64.txt').read_text()).decode(),
+                             (self.root/'nodes.txt').read_text())
+            for relative, data in tls.items(): self.assertEqual((self.root/relative).read_bytes(), data)
+
     def test_existing_protocol_not_overwritten(self):
         node=self.make_protocol('vision')
         with self.assertRaises(ValueError): core.prepare(self.root,Path(ENGINE),options())
@@ -465,7 +538,12 @@ class EngineTests(TemporaryFixture):
     def test_private_ip_rejected(self): self.real_connection('vision',block_private=True)
     def test_private_hostname_rejected(self): self.real_connection('vision',block_private=True,destination_host='localhost')
 
-    def real_connection(self,kind,block_private=False,destination_host=None,**changes):
+    def test_edited_nodes_forward_with_preserved_credentials(self):
+        for kind in core.KINDS:
+            with self.subTest(kind=kind):
+                self.real_connection(kind, edit_before_connect=True)
+
+    def real_connection(self,kind,block_private=False,destination_host=None,edit_before_connect=False,**changes):
         # Private lab: trusted local CA, HTTPS camouflage target, and local HTTP endpoint.
         tls_listener=socket.socket();tls_listener.bind(('127.0.0.1',0));tls_listener.listen();tls_listener.settimeout(0.25)
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.minimum_version=ssl.TLSVersion.TLSv1_3
@@ -496,6 +574,20 @@ class EngineTests(TemporaryFixture):
         processes=[]
         try:
             node=self.make_protocol(kind,target='localhost:'+str(tls_listener.getsockname()[1]),**changes)
+            if edit_before_connect:
+                new_port = free_port()
+                while new_port in [n['port'] for n in core.load_state(self.root)['nodes'].values()]:
+                    new_port = free_port()
+                state = core.edit_state(core.load_state(self.root), kind, 'localhost', new_port,
+                                        '/edited/forwarding' if kind.startswith('xhttp') else None)
+                stage = core.make_stage(self.root, state)
+                core.finish_stage(stage, state, Path(ENGINE))
+                core.commit(self.root, stage, Path(ENGINE), self.unit, False, False)
+                core.finalize(self.root, stage)
+                edited = core.load_state(self.root)['nodes'][kind]
+                for field in set(node) - {'address', 'port', 'path'}:
+                    self.assertEqual(edited[field], node[field])
+                node = edited
             server=core.server_config(core.load_state(self.root),self.root)
             if not block_private:
                 server['routing']['rules']=[]  # Allow only the isolated lab's endpoint in connection tests.
