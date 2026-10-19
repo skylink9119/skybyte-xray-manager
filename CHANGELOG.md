@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.5 — 2026-10-19
 
 - Add menu 12 → 7 to install missing UFW via APT and explicitly initialize/enable it after previewing confirmed SSH, current SSH session, node and extra TCP ports.
 - Stage allow rules before applying deny-incoming/allow-outgoing defaults and activation. Refuse active firewalls, existing netfilter rules, restrictive stored UFW rules and unsafe IPv6 configuration.
