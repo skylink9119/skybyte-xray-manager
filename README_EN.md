@@ -28,17 +28,17 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.10**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.11**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Nodes
 
 | Mode | Transport and security | Default TCP port | Requirements |
 | --- | --- | --- | --- |
 | VLESS + Reality + Vision | RAW/TCP + Reality, Vision flow | 443 | Reachable TLS 1.3/HTTP2 camouflage target |
-| VLESS + XHTTP + Reality | XHTTP + Reality, without Vision flow | 8443 | Same target requirements; no personal domain certificate |
+| VLESS + XHTTP + Reality | XHTTP + Reality, without Vision flow | 443 | Same target requirements; no personal domain certificate |
 | VLESS + XHTTP + TLS/CDN | XHTTP + verified TLS | 2053 | Domain and existing trusted fullchain/matching private key |
 
-One node per mode; all three can run together on separate ports. Existing modes cannot be silently replaced. Renaming, certificate refresh and core updates preserve credentials. Removal and reinstallation generate new credentials.
+One node per mode; all three can run together on separate ports. TCP/Reality and XHTTP/Reality both default to 443; choose distinct free ports when installing both. Existing node ports are retained. Existing modes cannot be silently replaced. Renaming, certificate refresh and core updates preserve credentials. Removal and reinstallation generate new credentials.
 
 Configure IPv4/IPv6 binding, public client address, ports, names and XHTTP paths. Client modes include auto, packet-up, stream-up and stream-one; the server accepts compatible modes. CDN defaults to packet-up and refuses stream-one. See [official XHTTP documentation](https://github.com/XTLS/Xray-core/discussions/4113) and [Reality documentation](https://xtls.github.io/en/config/transports/reality.html).
 
@@ -47,7 +47,7 @@ Configure IPv4/IPv6 binding, public client address, ports, names and XHTTP paths
 Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and arm64. Run the complete command in the VPS root terminal:
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.10/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.11/install.sh)
 ```
 
 The installer downloads the matching manager and verifies its release SHA256 before installation. After installation, including after a new SSH login, reopen it with:
@@ -68,7 +68,7 @@ Alternatively run `bash xray-manager.sh`. No sudo is needed. Missing bootstrap d
 
 Independent repository: [skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager). Released source lives on main. Releases include the installer, standalone manager, complete source archive and SHA256SUMS. Complete packages install locally; an installer downloaded alone fetches its payload online.
 
-Menus and prompts are bold green; metadata and warnings yellow; links and errors red. YES is case-insensitive. Non-terminal output and NO_COLOR disable color.
+Menus and prompts are bold green; metadata and warnings yellow; links and errors red. Action confirmations require typing YES explicitly (case-insensitive); Enter cancels. Cancelling node installation returns normally to the menu instead of reporting an installation failure. Non-terminal output and NO_COLOR disable color.
 
 The client connection address is required: enter this VPS's public IP or a domain pointing to it. This is separate from the Reality handshake name. Only bracketed defaults accept an empty answer. Address and listening port checks run first. If TCP 443 is occupied, for example by sing-box or a website, select another free port and allow its TCP traffic rather than stopping an existing service. `TLSv1.3 / h2` means only that the handshake target passed its check; configuration and service startup must still complete.
 
@@ -89,9 +89,11 @@ Permit actual TCP ports in the system firewall and provider security group. Menu
 
 Use **5 → 4** to edit an installed node's client address, TCP listen port and XHTTP path. Enter keeps each value; leaving every field blank returns without restarting. Vision has no path prompt. UUIDs, Reality keys, Short IDs, TLS SNI, certificates and other nodes are retained. Input, managed port conflicts and changed port availability are checked before staging. Server configuration, links, Base64 and Xray client JSON are regenerated together. Active services restart with rollback on failure; stopped services stay stopped. Re-import clients from menu 2 and allow the new TCP port; CDN users must also check provider port support.
 
+The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality: Microsoft (`www.microsoft.com`, default), Apple (`www.apple.com`), Amazon (`www.amazon.com`), Cloudflare (`www.cloudflare.com`) and Google (`dl.google.com`). The target defaults to the selected domain on `:443` and remains editable. Choose Custom or enter a domain directly; 0 returns. Each selection still undergoes the VPS TLS 1.3, HTTP/2 and certificate check before core download or node configuration changes. Reachability depends on the VPS route.
+
 ## Manager self-update
 
-Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for YES before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.10 installer once to obtain this menu.
+Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for YES before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.11 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 

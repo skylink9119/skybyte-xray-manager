@@ -28,17 +28,17 @@
 
 ---
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.10**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.11**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
 ## 三种节点
 
 | 安装方式 | 传输与安全 | 默认 TCP 端口 | 准备条件 |
 | --- | --- | --- | --- |
 | VLESS + Reality + Vision | RAW/TCP + Reality，Vision flow | 443 | 可达、支持 TLS 1.3 和 HTTP/2 的握手目标 |
-| VLESS + XHTTP + Reality | XHTTP + Reality，不混入 Vision flow | 8443 | 同上，无需自己的域名证书 |
+| VLESS + XHTTP + Reality | XHTTP + Reality，不混入 Vision flow | 443 | 同上，无需自己的域名证书 |
 | VLESS + XHTTP + TLS/CDN | XHTTP + TLS，默认开启验证 | 2053 | 自有域名、已有可信 fullchain 与匹配私钥 |
 
-可依次安装三种节点，每种协议一个入口、不同 TCP 端口。重复安装已存在的协议会拒绝；编辑节点、更新证书和核心升级保留已有 UUID 与密钥。删除后重新安装会生成新凭据。
+可依次安装三种节点，每种协议一个入口、不同 TCP 端口。TCP/Reality 与 XHTTP/Reality 默认均为 443，同时安装时需手动指定不同的空闲端口；已有节点端口保持不变。重复安装已存在的协议会拒绝；编辑节点、更新证书和核心升级保留已有 UUID 与密钥。删除后重新安装会生成新凭据。
 
 支持 IPv4 或 IPv6 监听，以及自定义客户端连接地址、端口、节点名和 XHTTP 路径。支持客户端 `auto`、`packet-up`、`stream-up`、`stream-one` 模式，服务端接受兼容的模式；CDN 模式默认 `packet-up`，拒绝在该模式选择 `stream-one`。参考 [Xray 的 XHTTP 说明](https://github.com/XTLS/Xray-core/discussions/4113) 和 [Reality 文档](https://xtls.github.io/config/transports/reality.html)。
 
@@ -47,7 +47,7 @@
 需要 **root、Ubuntu/Debian 和 systemd**；二进制支持 amd64、arm64。在 VPS 的 root 终端执行完整命令：
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.10/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.11/install.sh)
 ```
 
 安装入口会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装后，重新登录 SSH 也可以输入下面的快捷命令：
@@ -68,9 +68,11 @@ bash install.sh
 
 独立仓库：[skylink9119/skybyte-xray-manager](https://github.com/skylink9119/skybyte-xray-manager)。正式发布代码位于 `main`。发布页提供安装入口、自包含主脚本、完整源码包与 `SHA256SUMS`；完整包可直接本地安装，单独下载入口时会联网获取主脚本。
 
-首次启动选择语言。菜单和提问绿色加粗，节点信息黄色，链接和错误红色，警告黄色；非终端或 `NO_COLOR=1` 可关闭颜色。YES 确认不区分大小写。
+首次启动选择语言。菜单和提问绿色加粗，节点信息黄色，链接和错误红色，警告黄色；非终端或 `NO_COLOR=1` 可关闭颜色。操作确认需要明确输入 YES，不区分大小写；回车取消。取消节点安装会正常返回菜单，不显示安装失败。
 
 安装时，“客户端连接地址”必填：填写这台 VPS 的公网 IP 或指向它的域名；它与 Reality 握手域名是两项不同的设置。带方括号的选项才可回车使用默认值。脚本会先检查地址与监听端口；若提示 TCP 443 已被占用（例如已有 sing-box 或网站），请选择其他空闲端口并放行对应 TCP 规则，不要直接停止已有服务。`TLSv1.3 / h2` 只表示握手目标检查通过，节点还需完成配置与服务启动。
+
+安装 TCP/Reality 或 XHTTP/Reality 时提供握手域名预设：Microsoft（`www.microsoft.com`，默认）、Apple（`www.apple.com`）、Amazon（`www.amazon.com`）、Cloudflare（`www.cloudflare.com`）和 Google（`dl.google.com`）。选择编号后，握手目标默认跟随为所选域名的 `:443`，仍可手动修改；也可选择自定义或直接输入域名，输入 0 返回。每次仍从 VPS 检查所选目标的 TLS 1.3、HTTP/2 和证书，检查失败不继续下载核心或写入节点配置。预设不保证所有线路可达。
 
 ## 菜单
 
@@ -93,7 +95,7 @@ bash install.sh
 
 ## 更新管理脚本
 
-菜单 **13** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 YES 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.10 安装命令更新一次，之后即可使用菜单 13。
+菜单 **13** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 YES 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.11 安装命令更新一次，之后即可使用菜单 13。
 
 下载固定仓库、指定版本的主脚本与 `SHA256SUMS`，核对 GitHub 发布附件的 SHA256 及清单，并检查 Bash 语法、版本和自检结果。通过后在同一目录原子替换，旧脚本保留为 `manager.previous.sh`；替换后自检失败时回退，若回退无法写入则明确报错并保留备份。拒绝未托管目录、异常文件或符号链接。网络/API 限额、附件缺失、校验错误和写入权限不足会停止更新；不会改写节点配置、UUID、密钥、语言、Xray 核心、服务、防火墙或 BBR 参数。
 

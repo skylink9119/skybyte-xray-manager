@@ -36,7 +36,7 @@ import os,shutil,sys
 from pathlib import Path
 args=sys.argv[1:]
 url=next(x for x in args if x.startswith('https://'))
-prefix='https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.10/'
+prefix='https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.11/'
 if not url.startswith(prefix): sys.exit(23)
 asset=url[len(prefix):]
 if asset not in ['SHA256SUMS','xray-manager.sh']: sys.exit(23)
@@ -84,7 +84,7 @@ shutil.copyfile(source,args[args.index('-o')+1])
         self.assertEqual(result.returncode,0,result.stderr)
         result=subprocess.run([str(self.shortcut),'--version'],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(result.stdout.strip(),'SKYBYTE Xray Manager 0.1.10')
+        self.assertEqual(result.stdout.strip(),'SKYBYTE Xray Manager 0.1.11')
         self.assertEqual(self.lib.stat().st_mode & 0o777,0o700)
         self.assertEqual((self.lib/'manager.sh').stat().st_mode & 0o777,0o700)
         self.assertEqual((self.lib/'.owner').stat().st_mode & 0o777,0o600)
@@ -122,9 +122,9 @@ shutil.copyfile(source,args[args.index('-o')+1])
         for line in (folder/'SHA256SUMS').read_text().splitlines():
             digest,name=line.split()
             self.assertEqual(hashlib.sha256((folder/name).read_bytes()).hexdigest(),digest)
-        with tarfile.open(folder/'SKYBYTE-Xray-Manager-v0.1.10.tar.gz') as archive:
+        with tarfile.open(folder/'SKYBYTE-Xray-Manager-v0.1.11.tar.gz') as archive:
             names={item.name for item in archive}
-        prefix='skybyte-xray-manager-v0.1.10/'
+        prefix='skybyte-xray-manager-v0.1.11/'
         self.assertIn(prefix+'LICENSE',names)
         self.assertIn(prefix+'tests/test_installer.py',names)
         self.assertTrue(all(name.startswith(prefix) for name in names))

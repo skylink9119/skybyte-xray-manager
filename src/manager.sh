@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.10
+VERSION=0.1.11
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -31,7 +31,7 @@ ask(){
  printf '%s' "$result"
 }
 confirmed(){ [[ $1 =~ ^[Yy][Ee][Ss]$ ]]; }
-confirm(){ local answer; answer=$(ask "$1 [YES]: " "$2 [YES]: ") || return 1; confirmed "$answer"; }
+confirm(){ local answer; answer=$(ask "$1（输入 YES 确认；回车取消）：" "$2 (type YES to confirm; Enter to cancel): ") || return 1; confirmed "$answer"; }
 separator(){ printf '%s\n' '------------------------------------------------------------'; }
 
 # BUILD_HELPER
@@ -185,15 +185,42 @@ PY
  helper finalize --stage "$stage" || return 1
  accepted=1
 )
+choose_reality_sni(){
+ local choice selected
+ menu 'Reality 握手域名\n1 Microsoft  www.microsoft.com（默认）\n2 Apple      www.apple.com\n3 Amazon     www.amazon.com\n4 Cloudflare www.cloudflare.com\n5 Google     dl.google.com\n6 自定义域名\n0 返回' 'Reality handshake name\n1 Microsoft  www.microsoft.com (default)\n2 Apple      www.apple.com\n3 Amazon     www.amazon.com\n4 Cloudflare www.cloudflare.com\n5 Google     dl.google.com\n6 Custom domain\n0 Back' >&2
+ while :; do
+  choice=$(ask '选择 [1]（也可直接输入域名）：' 'Choose [1] (or enter a domain directly): ') || return 1
+  case ${choice:-1} in
+   1) selected=www.microsoft.com;;
+   2) selected=www.apple.com;;
+   3) selected=www.amazon.com;;
+   4) selected=www.cloudflare.com;;
+   5) selected=dl.google.com;;
+   6) while :; do
+       selected=$(ask '自定义 Reality 握手域名（必填）：' 'Custom Reality handshake domain (required): ') || return 1
+       [[ $selected =~ [^[:space:]] ]] && break
+       warn '请填写握手域名。' 'Enter a handshake domain.' >&2
+      done;;
+   0) return 0;;
+   *) if [[ $choice =~ ^[0-9]+$ ]]; then
+       warn '选项无效，请输入 1–6、0 或域名。' 'Invalid option; enter 1–6, 0 or a domain.' >&2
+       continue
+      fi
+      selected=$choice;;
+  esac
+  printf '%s\n' "$selected"
+  return 0
+ done
+}
 install_node(){
  local choice kind node_name node_port host sni target listen path='' mode=auto cert='' private_key='' stage
  local flags=()
  menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n0. Back'
  choice=$(ask '> ' '> ') || return 1
- case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=8443;; 3) kind=xhttp-tls; node_port=2053;; 0) return 0;; *) return 1;; esac
+ case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 0) return 0;; *) return 1;; esac
  node_name=$(ask '节点名称 [SKYBYTE]：' 'Node name [SKYBYTE]: ') || return 1; node_name=${node_name:-SKYBYTE}-$kind
  node_port=$(ask "监听 TCP 端口 [$node_port]：" "TCP listen port [$node_port]: ") || return 1
- case $kind in vision) node_port=${node_port:-443};; xhttp-reality) node_port=${node_port:-8443};; *) node_port=${node_port:-2053};; esac
+ case $kind in vision|xhttp-reality) node_port=${node_port:-443};; *) node_port=${node_port:-2053};; esac
  listen=$(ask '监听：1 IPv4  2 IPv6 [1]：' 'Listen: 1 IPv4  2 IPv6 [1]: ') || return 1
  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
  while :; do
@@ -211,7 +238,8 @@ install_node(){
   if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
   warn 'CDN 的 DNS、HTTPS 端口及回源 TLS 验证须在提供商后台配置。' 'Configure CDN DNS, supported HTTPS port and verified origin TLS at your provider.'
  else
-  sni=$(ask 'Reality 握手域名 [www.microsoft.com]：' 'Reality handshake name [www.microsoft.com]: ') || return 1; sni=${sni:-www.microsoft.com}
+  sni=$(choose_reality_sni) || return 1
+  [[ -n $sni ]] || return 0
   target=$(ask "握手目标 [$sni:443]：" "Handshake target [$sni:443]: ") || return 1; target=${target:-$sni:443}
   say '检查目标 TLS 1.3 与 HTTP/2……' 'Checking target TLS 1.3 and HTTP/2…'
   helper probe --target "$target" --sni "$sni" || return 1
@@ -223,7 +251,10 @@ install_node(){
   mode=${selected:-$mode}
  fi
  warn '请放行实际 TCP 端口，可用菜单 12 管理系统防火墙；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port using menu 12 for the host firewall; validation does not prove public/CDN connectivity.'
- confirm '安装并启动所选节点？' 'Install and start the selected node?' || return 1
+ if ! confirm '安装并启动所选节点？' 'Install and start the selected node?'; then
+  say '已取消节点安装，未下载核心或更改节点配置。' 'Node installation cancelled; no core download or node configuration changes.'
+  return 0
+ fi
  ensure_binary || { error '核心准备失败，具体原因见上方提示。' 'Core preparation failed; see the reason above.'; return 1; }
  flags+=(--kind "$kind" --port "$node_port" --listen "$listen" --address "$host" --sni "$sni" --name "$node_name")
  if [[ $kind == xhttp-tls ]]; then flags+=(--cert "$cert" --key "$private_key")

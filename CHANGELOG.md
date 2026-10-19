@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.11 — 2026-10-19
+
+- Default new XHTTP/Reality nodes to TCP 443 instead of 8443, retaining manual port selection and occupied-port checks.
+- Replace ambiguous [YES] prompts with explicit type-YES/Enter-to-cancel instructions; report cancelled node installation normally without core preparation or node writes.
+- Add numbered Reality handshake domain presets for Microsoft, Apple, Amazon, Cloudflare and Google, plus custom/direct input and a back option in both languages.
+- Apply the selected SNI and matching default target to TCP/Reality and XHTTP/Reality, retaining target overrides and the existing preflight and TLS 1.3/HTTP/2 probe before installation.
+- Cover default/custom selection, both Reality transports, cancellation, invalid input, failed probes and the separate TLS certificate flow.
+
 ## 0.1.10 — 2026-10-19
 
 - Lead BBR status with a prominent enabled/not-enabled summary based on the running congestion control, with terminal colors and readable parameter labels instead of raw JSON.
