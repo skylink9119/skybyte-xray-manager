@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.1
+VERSION=0.1.2
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -65,7 +65,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -371,6 +371,27 @@ def installation_preflight(options):
     check_port(options.listen, port(options.port))
 
 
+def edit_state(state, kind, client_address=None, node_port=None, path=None):
+    state = copy.deepcopy(state)
+    if kind not in state["nodes"]:
+        raise ValueError("Protocol not installed / 协议未安装")
+    node = state["nodes"][kind]
+    old_port = node["port"]
+    if client_address is not None:
+        node["address"] = address(client_address)
+    if node_port is not None:
+        node["port"] = port(node_port)
+    if path is not None:
+        if not kind.startswith("xhttp"):
+            raise ValueError("XHTTP path requires an XHTTP node / 只有 XHTTP 节点可修改路径")
+        node["path"] = xhttp_path(path)
+    validate_state(state)
+    # The running node owns its current port; probe only a changed port.
+    if node["port"] != old_port:
+        check_port(node["listen"], node["port"])
+    return state
+
+
 def prepare(root, binary, options):
     # Validate required input before creating directories or generating credentials.
     client_address = address(options.address)
@@ -648,18 +669,18 @@ def error_message(error):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight"])
+                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
     parser.add_argument("--kind", choices=KINDS)
-    parser.add_argument("--port", default="443")
+    parser.add_argument("--port", default=None)
     parser.add_argument("--listen", choices=["0.0.0.0", "::", "127.0.0.1", "::1"], default="0.0.0.0")
-    parser.add_argument("--address", default="")
+    parser.add_argument("--address", default=None)
     parser.add_argument("--sni", default="www.microsoft.com")
     parser.add_argument("--target", default="www.microsoft.com:443")
     parser.add_argument("--name", default="SKYBYTE")
-    parser.add_argument("--path", default="")
+    parser.add_argument("--path", default=None)
     parser.add_argument("--mode", choices=MODES, default="auto")
     parser.add_argument("--cert", default="")
     parser.add_argument("--key", default="")
@@ -672,6 +693,10 @@ def main():
     parser.add_argument("--asset", default="Xray-linux-64.zip")
     parser.add_argument("--tag", default=CORE_VERSION)
     options = parser.parse_args()
+    if options.command != "edit":
+        options.port = options.port if options.port is not None else "443"
+        options.address = options.address if options.address is not None else ""
+        options.path = options.path if options.path is not None else ""
     if options.command == "selfcheck":
         print("SKYBYTE Xray Manager " + VERSION + " OK")
         return
@@ -727,6 +752,8 @@ def main():
             del state["nodes"][options.kind]
         elif options.command == "rename":
             state["nodes"][options.kind]["name"] = name(options.name)
+        elif options.command == "edit":
+            state = edit_state(state, options.kind, options.address, options.port, options.path)
         elif options.command == "refresh-tls":
             if options.kind != "xhttp-tls":
                 raise ValueError("TLS protocol required")
@@ -982,8 +1009,9 @@ choose_kind(){
  case $choice in 1) printf 'vision';; 2) printf 'xhttp-reality';; 3) printf 'xhttp-tls';; *) return 1;; esac
 }
 edit_nodes(){
- local choice kind value stage cert private_key
- menu '1 重命名  2 删除协议  3 更新 TLS 证书  0 返回' '1 Rename  2 Remove protocol  3 Refresh TLS certificate  0 Back'
+ local choice kind value stage cert private_key host node_port path
+ local flags=()
+ menu '1 重命名  2 删除协议  3 更新 TLS 证书  4 修改地址/端口/路径  0 返回' '1 Rename  2 Remove protocol  3 Refresh TLS certificate  4 Edit address/port/path  0 Back'
  choice=$(ask '> ' '> ') || return 1
  [[ $choice != 0 ]] || return 0
  kind=$(choose_kind) || return 1
@@ -995,9 +1023,24 @@ edit_nodes(){
      cert=$(ask '新的 fullchain 证书绝对路径：' 'New fullchain certificate absolute path: ') || return 1
      private_key=$(ask '匹配的私钥绝对路径：' 'Matching private-key absolute path: ') || return 1
      stage=$(helper refresh-tls --kind "$kind" --cert "$cert" --key "$private_key") || return 1;;
+  4) helper show || return 1
+     warn '回车保留原值；修改后请重新导入客户端，并放行新 TCP 端口。TLS SNI 与证书保持原值。' 'Enter keeps the current value; re-import clients after editing and allow the new TCP port. TLS SNI and certificates are preserved.'
+     host=$(ask '新的客户端连接地址 [保留]：' 'New client connection address [keep]: ') || return 1
+     node_port=$(ask '新的监听 TCP 端口 [保留]：' 'New TCP listen port [keep]: ') || return 1
+     [[ -z $host ]] || flags+=(--address "$host")
+     [[ -z $node_port ]] || flags+=(--port "$node_port")
+     if [[ $kind == xhttp-* ]]; then
+      path=$(ask '新的 XHTTP 路径 [保留]：' 'New XHTTP path [keep]: ') || return 1
+      [[ -z $path ]] || flags+=(--path "$path")
+     fi
+     (( ${#flags[@]} )) || return 0
+     stage=$(helper edit --kind "$kind" "${flags[@]}") || return 1;;
   *) return 1;;
  esac
  apply_stage "$stage" || return 1
+ if [[ $choice == 4 ]]; then
+  say '节点已更新；请使用菜单 2 的新链接或导出文件更新客户端。' 'Node updated; update clients with the new links or exports from menu 2.'
+ fi
 }
 service_menu(){
  helper guard || return 1
@@ -1109,7 +1152,7 @@ main_menu(){
   printf '%sSKYBYTE Xray Manager v%s%s\n' "$CYAN" "$VERSION" "$RESET"
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
-  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 节点名称 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Rename / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n0. Exit'
+  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n0. Exit'
   local choice
   choice=$(ask '请选择：' 'Choose: ') || return 0
   case $choice in

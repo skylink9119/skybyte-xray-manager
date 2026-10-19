@@ -28,7 +28,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -334,6 +334,27 @@ def installation_preflight(options):
     check_port(options.listen, port(options.port))
 
 
+def edit_state(state, kind, client_address=None, node_port=None, path=None):
+    state = copy.deepcopy(state)
+    if kind not in state["nodes"]:
+        raise ValueError("Protocol not installed / 协议未安装")
+    node = state["nodes"][kind]
+    old_port = node["port"]
+    if client_address is not None:
+        node["address"] = address(client_address)
+    if node_port is not None:
+        node["port"] = port(node_port)
+    if path is not None:
+        if not kind.startswith("xhttp"):
+            raise ValueError("XHTTP path requires an XHTTP node / 只有 XHTTP 节点可修改路径")
+        node["path"] = xhttp_path(path)
+    validate_state(state)
+    # The running node owns its current port; probe only a changed port.
+    if node["port"] != old_port:
+        check_port(node["listen"], node["port"])
+    return state
+
+
 def prepare(root, binary, options):
     # Validate required input before creating directories or generating credentials.
     client_address = address(options.address)
@@ -611,18 +632,18 @@ def error_message(error):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight"])
+                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
     parser.add_argument("--kind", choices=KINDS)
-    parser.add_argument("--port", default="443")
+    parser.add_argument("--port", default=None)
     parser.add_argument("--listen", choices=["0.0.0.0", "::", "127.0.0.1", "::1"], default="0.0.0.0")
-    parser.add_argument("--address", default="")
+    parser.add_argument("--address", default=None)
     parser.add_argument("--sni", default="www.microsoft.com")
     parser.add_argument("--target", default="www.microsoft.com:443")
     parser.add_argument("--name", default="SKYBYTE")
-    parser.add_argument("--path", default="")
+    parser.add_argument("--path", default=None)
     parser.add_argument("--mode", choices=MODES, default="auto")
     parser.add_argument("--cert", default="")
     parser.add_argument("--key", default="")
@@ -635,6 +656,10 @@ def main():
     parser.add_argument("--asset", default="Xray-linux-64.zip")
     parser.add_argument("--tag", default=CORE_VERSION)
     options = parser.parse_args()
+    if options.command != "edit":
+        options.port = options.port if options.port is not None else "443"
+        options.address = options.address if options.address is not None else ""
+        options.path = options.path if options.path is not None else ""
     if options.command == "selfcheck":
         print("SKYBYTE Xray Manager " + VERSION + " OK")
         return
@@ -690,6 +715,8 @@ def main():
             del state["nodes"][options.kind]
         elif options.command == "rename":
             state["nodes"][options.kind]["name"] = name(options.name)
+        elif options.command == "edit":
+            state = edit_state(state, options.kind, options.address, options.port, options.path)
         elif options.command == "refresh-tls":
             if options.kind != "xhttp-tls":
                 raise ValueError("TLS protocol required")

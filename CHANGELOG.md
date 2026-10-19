@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 — 2026-10-19
+
+- Edit installed node addresses, TCP ports and XHTTP paths while preserving credentials and TLS certificates.
+- Validate changed ports, regenerate client exports and reuse configuration rollback; keep stopped services stopped and skip empty edits.
+- Add editing, export consistency, bilingual menu and failed-restart recovery regressions.
+
 ## 0.1.1 — 2026-10-15
 
 - Add the SKYBYTE YouTube subscription invitation and owner-supplied VPS affiliate links to both READMEs.

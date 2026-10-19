@@ -28,7 +28,7 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.1**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.2**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Nodes
 
@@ -47,7 +47,7 @@ Configure IPv4/IPv6 binding, public client address, ports, names and XHTTP paths
 Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and arm64. Run the complete command in the VPS root terminal:
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.1/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.2/install.sh)
 ```
 
 The installer downloads the matching manager and verifies its release SHA256 before installation. After installation, including after a new SSH login, reopen it with:
@@ -78,12 +78,14 @@ The client connection address is required: enter this VPS's public IP or a domai
 2. View nodes and client exports
 3. Local QR codes
 4. Service status, start/stop/restart, validation and logs
-5. Rename, remove or refresh TLS certificates
+5. Rename, remove, refresh TLS certificates or edit address/port/path
 6. Update verified official stable Xray-core
 7/8. Back up/restore configuration
 9/10/11. Guide, language and uninstall
 
 Permit actual TCP ports in the system firewall and provider security group. The script does not automatically change UFW, SSH ports or cloud security groups.
+
+Use **5 → 4** to edit an installed node's client address, TCP listen port and XHTTP path. Enter keeps each value; leaving every field blank returns without restarting. Vision has no path prompt. UUIDs, Reality keys, Short IDs, TLS SNI, certificates and other nodes are retained. Input, managed port conflicts and changed port availability are checked before staging. Server configuration, links, Base64 and Xray client JSON are regenerated together. Active services restart with rollback on failure; stopped services stay stopped. Re-import clients from menu 2 and allow the new TCP port; CDN users must also check provider port support.
 
 ## Domain TLS and CDN
 

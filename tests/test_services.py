@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import unittest
-from test_manager import TemporaryFixture, ENGINE, PROJECT, core, example_node
+from test_manager import TemporaryFixture, ENGINE, PROJECT, core, example_node, free_port
 
 
 @unittest.skipUnless(ENGINE,'Set XRAY_BIN to the official Xray binary')
@@ -91,6 +91,56 @@ p.write_text(json.dumps(x));sys.exit(result)
         self.assertFalse(self.state()['active'])
         self.assertNotIn('restart',self.state()['history'])
         self.assertEqual(core.load_state(self.root)['nodes']['vision']['uuid'],old['nodes']['vision']['uuid'])
+
+    def test_edit_menu_preserves_credentials_and_stopped_service(self):
+        for language in ['zh', 'en']:
+            with self.subTest(language=language):
+                old = self.installed()
+                result = self.shell('LANGUAGE="$2"; edit_nodes <<< "$3"', language,
+                                    '4\n1\nnew.example.com\n\n')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = json.loads(json.dumps(old))
+                expected['nodes']['vision']['address'] = 'new.example.com'
+                self.assertEqual(core.load_state(self.root), expected)
+                self.assertFalse(self.state()['active'])
+                self.assertNotIn('restart', self.state()['history'])
+
+    def test_xhttp_edit_menu_updates_path_and_restarts_active_service(self):
+        state = {'schema': 1, 'nodes': {'xhttp-reality': example_node('xhttp-reality')}}
+        for relative, data in core.render_files(state, self.root).items():
+            core.write_private(self.root/relative, data)
+        core.write_private(self.unit, core.unit_content(self.root, Path(ENGINE)), 0o644)
+        new_port = free_port()
+        while new_port == state['nodes']['xhttp-reality']['port']: new_port = free_port()
+        self.set_controller(active=True, enabled=True)
+        result = self.shell('edit_nodes <<< "$2"', f'4\n2\nnew.example.com\n{new_port}\n/new/path\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state['nodes']['xhttp-reality'].update(address='new.example.com', port=new_port, path='/new/path')
+        self.assertEqual(core.load_state(self.root), state)
+        self.assertTrue(self.state()['active'])
+        self.assertTrue(self.state()['enabled'])
+        self.assertIn('restart', self.state()['history'])
+
+    def test_edit_menu_blank_input_does_not_restart(self):
+        old = self.installed()
+        self.set_controller(active=True)
+        result = self.shell('edit_nodes <<< "$2"', '4\n1\n\n\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(core.load_state(self.root), old)
+        self.assertNotIn('restart', self.state()['history'])
+
+    def test_edit_restart_failure_restores_exports_and_credentials(self):
+        old = self.installed()
+        original = {n: (self.root/n).read_bytes() for n in core.owned_names(old)}
+        self.set_controller(active=True, enabled=True, fail_restart=True)
+        result = self.shell('edit_nodes <<< "$2"', '4\n1\nnew.example.com\n\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(core.load_state(self.root), old)
+        for relative, data in original.items():
+            self.assertEqual((self.root/relative).read_bytes(), data)
+        self.assertTrue(self.state()['active'])
+        self.assertTrue(self.state()['enabled'])
+        self.assertFalse((self.root/'.transaction').exists())
 
     def test_interrupted_transaction_recovered_before_next_menu(self):
         old=self.installed();new=json.loads(json.dumps(old));new['nodes']['vision']['name']='uncommitted'
