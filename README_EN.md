@@ -28,7 +28,7 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.7**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.8**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Nodes
 
@@ -47,7 +47,7 @@ Configure IPv4/IPv6 binding, public client address, ports, names and XHTTP paths
 Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and arm64. Run the complete command in the VPS root terminal:
 
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.7/install.sh)
+bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.8/install.sh)
 ```
 
 The installer downloads the matching manager and verifies its release SHA256 before installation. After installation, including after a new SSH login, reopen it with:
@@ -91,7 +91,7 @@ Use **5 → 4** to edit an installed node's client address, TCP listen port and 
 
 ## Manager self-update
 
-Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for YES before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.7 installer once to obtain this menu.
+Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for YES before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.8 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 
@@ -99,12 +99,12 @@ After success the old menu exits; run `xr` again. The backup retains one previou
 
 ## Firewall and BBR
 
-Use **12 → Firewall / BBR**. The development version groups firewall actions (1–5) and BBR actions (6–8), with one item per line:
+Use **12 → Firewall / BBR**. The menu groups firewall actions (1–5) and BBR actions (6–8), with one item per line:
 
 - **1**: show UFW/firewalld status plus firewalld default/active zones.
 - **2**: install and enable UFW. Refuse active firewalls and existing effective netfilter state. Require confirmed SSH ports without assuming 22, merge the current SSH_CONNECTION server port and managed node ports, and accept other TCP services such as websites on 80/443. After preview and YES, install UFW with APT if missing, stage allows, set deny-incoming/allow-outgoing defaults, then enable it. Restrictive/routed stored UFW rules or invalid IPv6 configuration stop initialization. Failed activation attempts to return to inactive; failed rollback directs the user to the provider console. Added rules, defaults and packages may remain for inspection/retry.
 - **3/4**: allow all installed node TCP ports or one selected port (1–65535), with a port preview and YES confirmation. Select a firewalld zone or press Enter for the default; check that it covers the public interface. Exactly one supported firewall must already be active. This does not install, enable, disable, reset or flush firewalls, change policies/SSH, or remove ports. Runtime and permanent firewalld ports are updated separately without a global reload. On failure some allows may remain; inspect status before retrying.
-- **5**: disable/remove UFW. Submenu **1** disables it while keeping the package and rule configuration; **2** removes the package and retains configuration; **3 (development, unreleased)** removes the package and purges UFW rule configuration irreversibly. Check package health, dependencies and locks, ask for YES, then disable and verify before targeting only `ufw`. Option 3 uses `dpkg --purge ufw` and can clean configuration left by option 2; absent packages without dpkg configuration records do not trigger deletion of unknown files. Held/incomplete packages or dependency conflicts stop the operation; disable failure prevents removal. Purge failure reports potentially partial deletion and does not re-enable UFW automatically. Preflight is read-only, without forced dependencies, autoremove or removing other packages. Other firewalls, iptables/nftables tools, provider rules, nodes, SSH and BBR configuration are outside the cleanup scope; no direct global rule flush is issued. Previously blocked ports may become reachable after disabling UFW.
+- **5**: disable/remove UFW. Submenu **1** disables it while keeping the package and rule configuration; **2** removes the package and retains configuration; **3** removes the package and purges UFW rule configuration irreversibly. Check package health, dependencies and locks, ask for YES, then disable and verify before targeting only `ufw`. Option 3 uses `dpkg --purge ufw` and can clean configuration left by option 2; absent packages without dpkg configuration records do not trigger deletion of unknown files. Held/incomplete packages or dependency conflicts stop the operation; disable failure prevents removal. Purge failure reports potentially partial deletion and does not re-enable UFW automatically. Preflight is read-only, without forced dependencies, autoremove or removing other packages. Other firewalls, iptables/nftables tools, provider rules, nodes, SSH and BBR configuration are outside the cleanup scope; no direct global rule flush is issued. Previously blocked ports may become reachable after disabling UFW.
 - **6/7/8**: show BBR status, enable BBR and the fq default, or restore previous values. Uses the existing kernel, attempting `tcp_bbr` / `sch_fq` module loading if needed; never installs a kernel. The dedicated `/etc/sysctl.d/90-skybyte-xray-bbr.conf` stores original values in a comment. Foreign, edited or symlink files are refused. Repeated enabling keeps the first snapshot. Failed application attempts rollback; incomplete rollback retains the recovery file and reports failure.
 
 BBR changes the system TCP default, primarily affecting new connections; speed gains vary. The fq default does not replace existing interface queues. Other boot configuration may override these defaults; check status after reboot. Restore removes only the managed file and reapplies saved runtime values, leaving other sysctl files unchanged. Uninstall retains firewall rules and BBR settings; use **12 → 8** first to restore BBR if desired.

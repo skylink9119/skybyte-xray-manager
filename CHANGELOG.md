@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.8 — 2026-10-19
 
 - Group firewall menu actions as 1–5 and BBR actions as 6–8, with one action per line and updated recovery references.
 - Add UFW submenu 3 to purge its package and rule configuration, including residual configuration after package removal, with explicit confirmation and matching read-only preflight.
