@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.4
+VERSION=0.1.5
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -419,9 +419,36 @@ firewall_open(){
  fi
  say 'TCP 放行命令已完成；仍需验证区域、IPv6 规则、规则优先级及公网连接。' 'TCP allow commands completed; still verify zone, IPv6 rules, rule priority and public connectivity.'
 }
+install_firewall(){
+ local detected='' ssh_input extra_input
+ local ssh_ports=() extra_ports=() flags=()
+ helper firewall-setup-check || return 1
+ if [[ -n ${SSH_CONNECTION:-} ]]; then detected=${SSH_CONNECTION##* }; fi
+ if [[ -n $detected ]]; then
+  ssh_input=$(ask "SSH TCP 端口（可空格分隔）[$detected]：" "SSH TCP ports (space-separated) [$detected]: ") || return 1
+  ssh_input=${ssh_input:-$detected}
+ else
+  ssh_input=$(ask 'SSH TCP 端口（必填，可空格分隔，不默认使用 22）：' 'SSH TCP ports (required, space-separated; no assumed port 22): ') || return 1
+ fi
+ read -r -a ssh_ports <<< "$ssh_input"
+ (( ${#ssh_ports[@]} )) || { error '必须填写 SSH 端口。' 'SSH ports are required.'; return 1; }
+ extra_input=$(ask '其他需保留的 TCP 端口（空格分隔，例如 80 443；回车无；节点端口自动添加）：' 'Other TCP ports to retain (e.g. 80 443; Enter for none; node ports are automatic): ') || return 1
+ read -r -a extra_ports <<< "$extra_input"
+ flags+=(--ssh-ports "${ssh_ports[@]}")
+ (( ${#extra_ports[@]} == 0 )) || flags+=(--ports "${extra_ports[@]}")
+ helper firewall-setup-plan "${flags[@]}" || return 1
+ warn '将通过系统 APT 安装 UFW（如缺少），先放行上述 TCP 端口，再启用默认拒绝入站、允许出站。其他未放行服务可能受影响；请确认 SSH 端口并保留服务商控制台入口。服务商安全组仍需单独设置。' 'Installs UFW with APT if missing, allows the TCP ports above, then enables deny-incoming/allow-outgoing defaults. Other services may be blocked; verify SSH ports and keep provider console access available. Provider security groups remain separate.'
+ confirm '安装并启用 UFW？' 'Install and enable UFW?' || return 0
+ if ! command -v ufw >/dev/null; then
+  apt_refresh && apt-get install -y ufw || return 1
+ fi
+ helper firewall-setup "${flags[@]}" || return 1
+ say 'UFW 已启用；请在保留当前 SSH 会话时，新开一个 SSH 连接验证访问。' 'UFW enabled; keep this SSH session and verify access from a new SSH connection.'
+ helper firewall-status
+}
 network_menu(){
  local choice value
- menu '1 防火墙状态  2 放行全部节点 TCP 端口  3 放行指定 TCP 端口\n4 BBR 状态  5 启用 BBR + fq  6 恢复启用前参数  0 返回' '1 Firewall status  2 Allow all node TCP ports  3 Allow a TCP port\n4 BBR status  5 Enable BBR + fq  6 Restore previous settings  0 Back'
+ menu '1 防火墙状态  2 放行全部节点 TCP 端口  3 放行指定 TCP 端口\n4 BBR 状态  5 启用 BBR + fq  6 恢复启用前参数\n7 安装并启用 UFW  0 返回' '1 Firewall status  2 Allow all node TCP ports  3 Allow a TCP port\n4 BBR status  5 Enable BBR + fq  6 Restore previous settings\n7 Install and enable UFW  0 Back'
  choice=$(ask '> ' '> ') || return 1
  case $choice in
   1) helper firewall-status;;
@@ -439,6 +466,7 @@ network_menu(){
   6) confirm '恢复本脚本启用 BBR 前的系统参数并移除本脚本的持久化文件？' 'Restore values saved before enabling BBR and remove the managed persistence file?' || return 0
      helper bbr-restore || return 1
      helper bbr-status;;
+  7) install_firewall;;
   0) return 0;; *) return 1;;
  esac
 }

@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.4
+VERSION=0.1.5
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -65,7 +65,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -727,6 +727,78 @@ def firewall_allow(numbers, zone=""):
     return "firewalld / " + zone
 
 
+def firewall_setup_check():
+    status = firewall_status()
+    if status["firewalld"] == "active" or status["ufw"] == "active":
+        raise ValueError("A firewall is already active; use the port allow menu / 已有防火墙启用，请使用端口放行菜单，不重复初始化")
+    # Do not replace rules belonging to Docker, native nftables or other managers.
+    for command in ("nft", "iptables-save", "ip6tables-save", "iptables-legacy-save", "ip6tables-legacy-save"):
+        if not shutil.which(command):
+            continue
+        args = [command, "list", "ruleset"] if command == "nft" else [command]
+        try:
+            rules = system_command(args).stdout
+        except (OSError, subprocess.SubprocessError):
+            raise ValueError("Cannot inspect " + command + "; UFW setup stopped / 无法检查 " + command + "，已停止 UFW 初始化，请检查权限与内核支持") from None
+        if command == "nft":
+            custom = bool(rules.strip())
+        else:
+            custom = any(line.startswith("-A ") or (line.startswith(":") and line.split()[1] != "ACCEPT")
+                         for line in rules.splitlines())
+        if custom:
+            raise ValueError("Existing netfilter rules detected; configure the firewall manually / 检测到已有 netfilter 规则（可能属于 Docker 或其他防火墙），请手动配置，不覆盖")
+
+
+def firewall_setup_plan(root, ssh_ports, extra_ports):
+    ssh = {port(number) for number in ssh_ports}
+    if not ssh:
+        raise ValueError("Confirm at least one SSH TCP port / 必须确认至少一个 SSH TCP 端口")
+    connection = os.environ.get("SSH_CONNECTION", "")
+    if connection:
+        fields = connection.split()
+        if len(fields) != 4:
+            raise ValueError("Cannot identify current SSH port / 无法识别当前 SSH 连接端口")
+        ipaddress.ip_address(fields[0]); ipaddress.ip_address(fields[2])
+        ssh.add(port(fields[3]))
+    nodes = set()
+    root = checked_path(root)
+    if root.exists():
+        ensure_owned(root)
+        nodes = {node["port"] for node in load_state(root)["nodes"].values()}
+    return sorted(ssh), sorted((nodes | {port(number) for number in extra_ports}) - ssh)
+
+
+def firewall_setup(root, ssh_ports, extra_ports, config=Path("/etc/default/ufw")):
+    ssh, others = firewall_setup_plan(root, ssh_ports, extra_ports)
+    firewall_setup_check()
+    if not shutil.which("ufw"):
+        raise ValueError("Install UFW first / 请先安装 UFW")
+    text = checked_path(config).read_text()
+    values = re.findall(r'^\s*IPV6=["\']?(yes|no)["\']?\s*$', text, re.MULTILINE)
+    if values != ["yes"]:
+        raise ValueError("UFW requires IPV6=yes; inspect /etc/default/ufw / 请先核对 /etc/default/ufw 并设置 IPV6=yes，避免遗漏 IPv6 防护")
+    added = system_command(["ufw", "show", "added"]).stdout
+    if re.search(r'^ufw\s+(?:deny|reject|limit|route|insert|prepend)\b', added, re.MULTILINE):
+        raise ValueError("Existing restrictive UFW rules require manual review / 已有拒绝、限速或路由 UFW 规则，请手动核对后启用")
+    # Stage SSH allows first while inactive; never assume SSH uses port 22.
+    for number in ssh + others:
+        system_command(["ufw", "insert", "1", "allow", "in", "proto", "tcp", "to", "any", "port", str(number)])
+    system_command(["ufw", "default", "deny", "incoming"])
+    system_command(["ufw", "default", "allow", "outgoing"])
+    try:
+        system_command(["ufw", "--force", "enable"])
+        if firewall_status()["ufw"] != "active":
+            raise ValueError("UFW did not become active / UFW 未成功启用")
+    except BaseException as error:
+        try:
+            system_command(["ufw", "--force", "disable"])
+            if firewall_status()["ufw"] != "inactive":
+                raise ValueError("UFW still active")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise ValueError("UFW enable/rollback incomplete; check from provider console / UFW 启用或回退未完成，请通过服务商控制台检查；已保留规则") from error
+        raise
+
+
 BBR_VALUES = {"net.core.default_qdisc": "fq", "net.ipv4.tcp_congestion_control": "bbr"}
 BBR_MARK = "# SKYBYTE Xray Manager BBR v1\n"
 BBR_PATH = Path("/etc/sysctl.d/90-skybyte-xray-bbr.conf")
@@ -935,7 +1007,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update"])
+                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -961,11 +1033,23 @@ def main():
     parser.add_argument("--ports", nargs="+", default=[])
     parser.add_argument("--zone", default="")
     parser.add_argument("--release", default="")
+    parser.add_argument("--ssh-ports", nargs="+", default=[])
     options = parser.parse_args()
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
         options.address = options.address if options.address is not None else ""
         options.path = options.path if options.path is not None else ""
+    if options.command == "firewall-setup-check":
+        firewall_setup_check()
+        return
+    if options.command == "firewall-setup-plan":
+        ssh, others = firewall_setup_plan(Path(options.root), options.ssh_ports, options.ports)
+        print("SSH TCP: " + ", ".join(map(str, ssh)))
+        print("Other TCP / 其他 TCP: " + (", ".join(map(str, others)) or "none / 无"))
+        return
+    if options.command == "firewall-setup":
+        firewall_setup(Path(options.root), options.ssh_ports, options.ports)
+        return
     if options.command == "manager-latest":
         tag = manager_release()["tag_name"]
         if manager_version(tag) > manager_version("v" + VERSION):
@@ -1478,9 +1562,36 @@ firewall_open(){
  fi
  say 'TCP 放行命令已完成；仍需验证区域、IPv6 规则、规则优先级及公网连接。' 'TCP allow commands completed; still verify zone, IPv6 rules, rule priority and public connectivity.'
 }
+install_firewall(){
+ local detected='' ssh_input extra_input
+ local ssh_ports=() extra_ports=() flags=()
+ helper firewall-setup-check || return 1
+ if [[ -n ${SSH_CONNECTION:-} ]]; then detected=${SSH_CONNECTION##* }; fi
+ if [[ -n $detected ]]; then
+  ssh_input=$(ask "SSH TCP 端口（可空格分隔）[$detected]：" "SSH TCP ports (space-separated) [$detected]: ") || return 1
+  ssh_input=${ssh_input:-$detected}
+ else
+  ssh_input=$(ask 'SSH TCP 端口（必填，可空格分隔，不默认使用 22）：' 'SSH TCP ports (required, space-separated; no assumed port 22): ') || return 1
+ fi
+ read -r -a ssh_ports <<< "$ssh_input"
+ (( ${#ssh_ports[@]} )) || { error '必须填写 SSH 端口。' 'SSH ports are required.'; return 1; }
+ extra_input=$(ask '其他需保留的 TCP 端口（空格分隔，例如 80 443；回车无；节点端口自动添加）：' 'Other TCP ports to retain (e.g. 80 443; Enter for none; node ports are automatic): ') || return 1
+ read -r -a extra_ports <<< "$extra_input"
+ flags+=(--ssh-ports "${ssh_ports[@]}")
+ (( ${#extra_ports[@]} == 0 )) || flags+=(--ports "${extra_ports[@]}")
+ helper firewall-setup-plan "${flags[@]}" || return 1
+ warn '将通过系统 APT 安装 UFW（如缺少），先放行上述 TCP 端口，再启用默认拒绝入站、允许出站。其他未放行服务可能受影响；请确认 SSH 端口并保留服务商控制台入口。服务商安全组仍需单独设置。' 'Installs UFW with APT if missing, allows the TCP ports above, then enables deny-incoming/allow-outgoing defaults. Other services may be blocked; verify SSH ports and keep provider console access available. Provider security groups remain separate.'
+ confirm '安装并启用 UFW？' 'Install and enable UFW?' || return 0
+ if ! command -v ufw >/dev/null; then
+  apt_refresh && apt-get install -y ufw || return 1
+ fi
+ helper firewall-setup "${flags[@]}" || return 1
+ say 'UFW 已启用；请在保留当前 SSH 会话时，新开一个 SSH 连接验证访问。' 'UFW enabled; keep this SSH session and verify access from a new SSH connection.'
+ helper firewall-status
+}
 network_menu(){
  local choice value
- menu '1 防火墙状态  2 放行全部节点 TCP 端口  3 放行指定 TCP 端口\n4 BBR 状态  5 启用 BBR + fq  6 恢复启用前参数  0 返回' '1 Firewall status  2 Allow all node TCP ports  3 Allow a TCP port\n4 BBR status  5 Enable BBR + fq  6 Restore previous settings  0 Back'
+ menu '1 防火墙状态  2 放行全部节点 TCP 端口  3 放行指定 TCP 端口\n4 BBR 状态  5 启用 BBR + fq  6 恢复启用前参数\n7 安装并启用 UFW  0 返回' '1 Firewall status  2 Allow all node TCP ports  3 Allow a TCP port\n4 BBR status  5 Enable BBR + fq  6 Restore previous settings\n7 Install and enable UFW  0 Back'
  choice=$(ask '> ' '> ') || return 1
  case $choice in
   1) helper firewall-status;;
@@ -1498,6 +1609,7 @@ network_menu(){
   6) confirm '恢复本脚本启用 BBR 前的系统参数并移除本脚本的持久化文件？' 'Restore values saved before enabling BBR and remove the managed persistence file?' || return 0
      helper bbr-restore || return 1
      helper bbr-status;;
+  7) install_firewall;;
   0) return 0;; *) return 1;;
  esac
 }
