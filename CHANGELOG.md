@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.10 — 2026-10-19
 
 - Lead BBR status with a prominent enabled/not-enabled summary based on the running congestion control, with terminal colors and readable parameter labels instead of raw JSON.
 - Distinguish active BBR from available algorithms or a saved configuration; status remains read-only after viewing, enabling or restoring settings.
