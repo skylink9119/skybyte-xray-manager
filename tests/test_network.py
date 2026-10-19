@@ -4,6 +4,7 @@
 import copy
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import unittest
@@ -493,3 +494,147 @@ class UpstreamUFWFrontendTests(unittest.TestCase):
         self.backend.rules[False] = ['existing']
         self.apply(['prepend','allow','in','proto','tcp','to','any','port','2222'])
         self.assertEqual(self.backend.positions,[(False,1),(True,0)])
+
+
+class UFWRemovalTests(unittest.TestCase):
+    def setUp(self):
+        self.active = True; self.package = 'install ok installed'; self.missing = False
+        self.dpkg_fail = False; self.disable_fail = False; self.stays_active = False
+        self.calls = []
+        patch = mock.patch.object(core.shutil,'which',side_effect=lambda name: None if self.missing else '/mock/'+name)
+        patch.start(); self.addCleanup(patch.stop)
+        patch = mock.patch.object(core,'system_command',side_effect=self.command)
+        patch.start(); self.addCleanup(patch.stop)
+
+    def command(self,args,check=True):
+        self.calls.append(args); output = ''; code = 0
+        if args == ['ufw','status']: output = 'Status: active\n' if self.active else 'Status: inactive\n'
+        elif args == ['ufw','--force','disable']:
+            if self.disable_fail: code = 1
+            elif not self.stays_active: self.active = False
+        elif args == ['dpkg-query','-W','-f=${Status}','ufw']:
+            output = self.package if self.package else ''; code = 0 if self.package else 1
+        elif args == ['dpkg','--no-act','--remove','ufw']: code = 1 if self.dpkg_fail else 0
+        else: raise AssertionError(args)
+        if check and code: raise subprocess.CalledProcessError(code,args)
+        return subprocess.CompletedProcess(args,code,stdout=output,stderr='')
+
+    def test_disable_verified_and_package_retained(self):
+        self.assertEqual(core.ufw_disable(),'disabled')
+        self.assertFalse(self.active)
+        self.assertEqual(self.package,'install ok installed')
+        self.assertFalse(any(a[0].startswith('dpkg') for a in self.calls))
+
+    def test_disable_failure_or_active_after_disable_is_not_success(self):
+        for fail, stays in [(True,False),(False,True)]:
+            self.disable_fail = fail; self.stays_active = stays
+            with self.subTest(fail=fail,stays=stays), self.assertRaises(ValueError): core.ufw_disable()
+            self.assertTrue(self.active)
+
+    def test_disable_absent_is_noop(self):
+        self.missing = True
+        self.assertEqual(core.ufw_disable(),'absent')
+        self.assertFalse(self.calls)
+
+    def test_plan_uses_dpkg_no_act_before_action_and_changes_nothing(self):
+        self.assertEqual(core.ufw_remove_plan(),'ready')
+        self.assertIn(['dpkg','--no-act','--remove','ufw'],self.calls)
+        self.assertTrue(self.active)
+        self.assertFalse(any(a[0] == 'ufw' for a in self.calls))
+
+    def test_dependency_failure_refuses_before_disabling(self):
+        self.dpkg_fail = True
+        with self.assertRaisesRegex(ValueError,'未改变'): core.ufw_remove_plan()
+        self.assertTrue(self.active)
+        self.assertFalse(any(a[0] == 'ufw' for a in self.calls))
+
+    def test_package_absent_or_config_only_is_noop(self):
+        for package in ['', 'deinstall ok config-files', 'unknown ok not-installed']:
+            self.package = package; self.calls.clear()
+            with self.subTest(package=package): self.assertEqual(core.ufw_remove_plan(),'absent')
+            self.assertEqual(len(self.calls),1)
+
+    def test_held_partial_or_missing_files_are_refused(self):
+        for package in ['hold ok installed','install ok unpacked','install reinstreq half-installed']:
+            self.package = package
+            with self.subTest(package=package), self.assertRaises(ValueError): core.ufw_remove_plan()
+        self.package = 'install ok installed'; self.missing = True
+        with self.assertRaisesRegex(ValueError,'文件缺失'): core.ufw_remove_plan()
+        self.assertTrue(self.active)
+
+
+class UFWRemovalMenuTests(TemporaryFixture):
+    def shell(self,inputs,language='zh',remove_fail=False,disable_fail=False,plan='ready',verify='absent'):
+        log = self.base/'remove.log'
+        script = '''source "$1"
+helper(){
+ printf '%s\\n' "$*" >> "$REMOVE_LOG"
+ case $1 in
+  ufw-state) printf 'active';;
+  ufw-remove-plan) printf '%s' "$REMOVE_PLAN";;
+  ufw-disable) [[ $DISABLE_FAIL == no ]] || return 1; printf 'disabled';;
+  ufw-package-state) printf '%s' "$REMOVE_VERIFY";;
+  *) return 1;;
+ esac
+}
+dpkg(){ printf '%s\\n' "dpkg $*" >> "$REMOVE_LOG"; [[ $REMOVE_FAIL == no ]]; }
+LANGUAGE="$2"
+if network_menu; then exit 0; else exit 1; fi
+'''
+        result = subprocess.run(['bash','-c',script,'test',str(PROJECT/'xray-manager.sh'),language],
+            input=inputs,text=True,capture_output=True,env={**os.environ,'REMOVE_LOG':str(log),
+            'REMOVE_PLAN':plan,'REMOVE_VERIFY':verify,'REMOVE_FAIL':'yes' if remove_fail else 'no',
+            'DISABLE_FAIL':'yes' if disable_fail else 'no'})
+        calls = log.read_text().splitlines() if log.exists() else []
+        if log.exists(): log.unlink()
+        return result,calls
+
+    def test_remove_after_verified_disable_in_both_languages(self):
+        for language in ['zh','en']:
+            result,calls = self.shell('8\n2\nYES\n',language=language)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(calls,['ufw-state','ufw-remove-plan','ufw-disable','dpkg --remove ufw','ufw-package-state'])
+
+    def test_only_disable_does_not_remove_package(self):
+        result,calls = self.shell('8\n1\nYES\n')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(calls,['ufw-state','ufw-disable'])
+
+    def test_cancel_does_not_disable_or_remove(self):
+        for option in ['1','2']:
+            result,calls = self.shell('8\n'+option+'\nno\n')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertNotIn('ufw-disable',calls)
+            self.assertFalse(any(c.startswith('dpkg ') for c in calls))
+
+    def test_disable_failure_prevents_removal(self):
+        result,calls = self.shell('8\n2\nYES\n',disable_fail=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertFalse(any(c.startswith('dpkg ') for c in calls))
+
+    def test_removal_failure_does_not_claim_success_or_reenable(self):
+        result,calls = self.shell('8\n2\nYES\n',language='en',remove_fail=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('package removal did not complete',result.stderr)
+        self.assertNotIn('ufw-package-state',calls)
+        self.assertNotIn('package removed',result.stdout)
+        self.assertEqual(calls.count('ufw-disable'),1)
+
+    def test_unverified_removal_is_not_success(self):
+        result,calls = self.shell('8\n2\nYES\n',verify='installed')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('ufw-package-state',calls)
+
+    def test_absent_package_does_not_disable(self):
+        result,calls = self.shell('8\n2\n',plan='absent')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(calls,['ufw-state','ufw-remove-plan'])
+
+
+@unittest.skipUnless(shutil.which('dpkg') and shutil.which('ufw'), 'Requires distro dpkg and ufw')
+class DpkgRemovalPlanIntegrationTests(unittest.TestCase):
+    def test_real_dpkg_no_act_does_not_remove_installed_ufw(self):
+        before = core.ufw_package_state()
+        self.assertEqual(before,'installed')
+        self.assertEqual(core.ufw_remove_plan(),'ready')
+        self.assertEqual(core.ufw_package_state(),before)
