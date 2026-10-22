@@ -27,9 +27,12 @@ jobs:
         run: |
           python3 scripts/build.py --check
           bash -n install.sh
+          bash -n bootstrap.sh
+          bash -n src/quickstart.sh
+          bash -n src/bootstrap.sh
           bash -n src/manager.sh
           bash -n xray-manager.sh
-          shellcheck install.sh src/manager.sh xray-manager.sh
+          shellcheck install.sh bootstrap.sh src/quickstart.sh src/bootstrap.sh src/manager.sh xray-manager.sh
           bash xray-manager.sh --self-check
       - name: Verified official engine and real proxy tests
         env:

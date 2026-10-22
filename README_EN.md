@@ -44,13 +44,15 @@ Configure IPv4/IPv6 binding, public client address, ports, names and XHTTP paths
 
 ## Installation
 
-Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and arm64. Run the complete command in the VPS root terminal:
+Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and arm64. Run this single command in the VPS root terminal. If curl is missing, curl and CA certificates are installed automatically:
 
+<!-- SKYBYTE_INSTALL_COMMAND_START -->
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.12/install.sh)
+(if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl ca-certificates; fi && script=$(curl -q -fsSL --max-time 60 https://raw.githubusercontent.com/skylink9119/skybyte-xray-manager/main/bootstrap.sh) && bash -c "$script")
 ```
+<!-- SKYBYTE_INSTALL_COMMAND_END -->
 
-The installer downloads the matching manager and verifies its release SHA256 before installation. Installer and payload versions must match; a newer or unrecognized installed manager is retained. Equal-version reinstallation is supported. After installation, including after a new SSH login, reopen it with:
+The bootstrap downloads the pinned installer into a private temporary directory, stops on download or syntax failure, cleans up afterward and preserves menu input. Working APT repositories are required when curl is missing. The installer still downloads the matching manager and verifies its release SHA256 before installation. Installer and payload versions must match; a newer or unrecognized installed manager is retained. Equal-version reinstallation is supported. After installation, including after a new SSH login, reopen it with:
 
 ```bash
 xr
