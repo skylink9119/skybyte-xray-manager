@@ -1,0 +1,173 @@
+# Copyright (C) 2026 SKYBYTE (skylink9119)
+# SPDX-License-Identifier: GPL-3.0-only
+"""Run the pasteable curl bootstrap with isolated download/package simulators."""
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+BASH = os.environ.get('BASH_BIN', 'bash')
+
+
+class CurlBootstrapTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.staging = self.root/'staging'; self.staging.mkdir()
+        self.log = self.root/'events'
+
+    def run_case(self, present=False, failure='', uid='0', distribution='debian', quickstart=False):
+        available = self.root/'curl-present'
+        available.unlink(missing_ok=True); self.log.unlink(missing_ok=True)
+        if present: available.touch()
+        release = self.root/'os-release'; release.write_text('ID='+distribution+'\n')
+        definitions = r'''
+id(){ [[ ${1:-} == -u ]] && printf '%s\n' "$TEST_UID"; }
+command(){
+ if [[ ${1:-} == -v ]];then
+  case ${2:-} in curl) [[ -f $TEST_ROOT/curl-present ]];return;; flock|python3) return 0;; esac
+ fi
+ builtin command "$@"
+}
+apt-get(){
+ printf 'apt:%s\n' "$*" >> "$TEST_ROOT/events"
+ if [[ ${*: -1} == update ]];then [[ $TEST_FAILURE != update ]];return;fi
+ if [[ ${1:-} == install ]];then
+  [[ $TEST_FAILURE != install ]] || return 100
+  [[ $TEST_FAILURE == unavailable ]] || : > "$TEST_ROOT/curl-present"
+  return 0
+ fi
+ return 1
+}
+curl(){
+ printf 'download:%s\n' "$*" >> "$TEST_ROOT/events"
+ [[ -f $TEST_ROOT/curl-present ]] || return 127
+ local output=''
+ while (($#));do if [[ $1 == -o ]];then output=$2;shift 2;else shift;fi;done
+ if [[ -z $output ]];then
+  printf '%s\n' 'IFS= read -r answer || exit 1' 'printf "stdin:%s\n" "$answer" >> "$TEST_ROOT/events"'
+  [[ $TEST_FAILURE != download ]];return
+ fi
+ if [[ $TEST_FAILURE == syntax ]];then printf 'if ((\n' > "$output";else printf 'downloaded fixture\n' > "$output";fi
+ [[ $TEST_FAILURE != download ]]
+}
+bash(){
+ if [[ $1 == -n ]];then builtin command "$TEST_BASH" "$@";return;fi
+ if [[ $1 == -c ]];then
+  printf 'launch\n' >> "$TEST_ROOT/events"
+  builtin command "$TEST_BASH" "$@";return
+ fi
+ [[ -f $1 ]] || return 1
+ printf 'launch\n' >> "$TEST_ROOT/events"
+ local answer
+ IFS= read -r answer || return 1
+ printf 'stdin:%s\n' "$answer" >> "$TEST_ROOT/events"
+}
+'''
+        action = (ROOT/'src/quickstart.sh' if quickstart else ROOT/'bootstrap.sh').read_text()
+        result = subprocess.run([BASH, '-c', definitions+'\n'+action],
+            input='menu input preserved\n', capture_output=True, text=True, timeout=10, cwd=self.root,
+            env={**os.environ, 'TEST_ROOT':str(self.root), 'TEST_FAILURE':failure, 'TEST_UID':uid,
+                 'OS_RELEASE':str(release), 'TMPDIR':str(self.staging), 'NO_COLOR':'1', 'TEST_BASH':BASH})
+        events = self.log.read_text().splitlines() if self.log.exists() else []
+        self.assertEqual(list(self.staging.iterdir()), [], 'Temporary installer must be cleaned up')
+        return result, events
+
+    def test_existing_curl_skips_apt_and_preserves_interactive_input(self):
+        result, events = self.run_case(present=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(event.startswith('apt:') for event in events))
+        self.assertEqual(events[-2:], ['launch', 'stdin:menu input preserved'])
+        download = events[0]
+        self.assertIn("--proto =https --proto-redir =https", download)
+        self.assertIn('https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.12/install.sh', download)
+        self.assertNotIn(' -k ', download)
+
+    def test_missing_curl_is_installed_before_download_on_supported_systems(self):
+        for distribution in ['debian', 'ubuntu']:
+            with self.subTest(distribution=distribution):
+                result, events = self.run_case(distribution=distribution)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('Installing curl', result.stdout)
+                self.assertTrue(events[0].endswith(' update'))
+                self.assertIn('APT::Update::Error-Mode=any', events[0])
+                self.assertEqual(events[1], 'apt:install -y curl ca-certificates')
+                self.assertTrue(events[2].startswith('download:'))
+                self.assertEqual(events[-2:], ['launch', 'stdin:menu input preserved'])
+
+    def test_apt_index_failure_stops_before_install_download_or_launch(self):
+        result, events = self.run_case(failure='update')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('APT refresh failed', result.stderr)
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0].endswith(' update'))
+
+    def test_package_failure_stops_before_download_or_launch(self):
+        result, events = self.run_case(failure='install')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('curl installation failed', result.stderr)
+        self.assertEqual(len(events), 2)
+        self.assertFalse(any(event.startswith('download:') or event == 'launch' for event in events))
+
+    def test_curl_presence_is_rechecked_after_package_installation(self):
+        result, events = self.run_case(failure='unavailable')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('curl is still unavailable', result.stderr)
+        self.assertEqual(len(events), 2)
+
+    def test_failed_download_does_not_run_or_overwrite_an_old_installer(self):
+        old = self.root/'install.sh'; old.write_text('keep existing file\n')
+        result, events = self.run_case(present=True, failure='download')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(old.read_text(), 'keep existing file\n')
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0].startswith('download:'))
+
+    def test_non_root_or_unsupported_system_stops_before_changes(self):
+        for uid, distribution, message in [('1000', 'debian', 'Please run as root'), ('0', 'fedora', 'Ubuntu/Debian only')]:
+            with self.subTest(uid=uid, distribution=distribution):
+                result, events = self.run_case(uid=uid, distribution=distribution)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(events, [])
+
+    def test_compact_command_with_curl_preserves_input_without_apt(self):
+        result, events = self.run_case(present=True, quickstart=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[-2:], ['launch', 'stdin:menu input preserved'])
+        self.assertEqual(len(events), 3)
+        self.assertIn('/main/bootstrap.sh', events[0])
+
+    def test_compact_command_installs_curl_before_fetching_bootstrap(self):
+        result, events = self.run_case(quickstart=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[:2], ['apt:update', 'apt:install -y curl ca-certificates'])
+        self.assertTrue(events[2].startswith('download:'))
+        self.assertEqual(events[-2:], ['launch', 'stdin:menu input preserved'])
+
+    def test_compact_command_stops_on_apt_failure(self):
+        for failure in ['update', 'install']:
+            with self.subTest(failure=failure):
+                result, events = self.run_case(failure=failure, quickstart=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(all(event.startswith('apt:') for event in events))
+
+    def test_compact_command_does_not_execute_partial_failed_download(self):
+        result, events = self.run_case(present=True, failure='download', quickstart=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0].startswith('download:'))
+
+    def test_invalid_installer_syntax_is_not_executed(self):
+        result, events = self.run_case(present=True, failure='syntax')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0].startswith('download:'))
+
+
+if __name__ == '__main__':
+    unittest.main()

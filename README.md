@@ -44,13 +44,15 @@
 
 ## 安装
 
-需要 **root、Ubuntu/Debian 和 systemd**；二进制支持 amd64、arm64。在 VPS 的 root 终端执行完整命令：
+需要 **root、Ubuntu/Debian 和 systemd**；二进制支持 amd64、arm64。在 VPS 的 root 终端运行下面这一条命令；缺少 `curl` 时自动安装 `curl` 和 CA 证书：
 
+<!-- SKYBYTE_INSTALL_COMMAND_START -->
 ```bash
-bash <(curl -fsSL https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.12/install.sh)
+(if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl ca-certificates; fi && script=$(curl -q -fsSL --max-time 60 https://raw.githubusercontent.com/skylink9119/skybyte-xray-manager/main/bootstrap.sh) && bash -c "$script")
 ```
+<!-- SKYBYTE_INSTALL_COMMAND_END -->
 
-安装入口会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装入口核对自身与主脚本版本，拒绝覆盖更高或无法识别的已安装版本；相同版本可重装。安装后，重新登录 SSH 也可以输入下面的快捷命令：
+启动脚本会把安装入口下载到独立临时目录，下载或语法检查失败立即停止，结束后清理临时文件，保留菜单交互输入。缺少 `curl` 时需要可用的 APT 软件源。安装入口仍会下载同版本主脚本并核对发布文件中的 SHA256，校验失败立即停止。安装入口核对自身与主脚本版本，拒绝覆盖更高或无法识别的已安装版本；相同版本可重装。安装后，重新登录 SSH 也可以输入下面的快捷命令：
 
 ```bash
 xr
