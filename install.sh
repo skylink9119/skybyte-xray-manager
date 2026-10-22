@@ -4,7 +4,7 @@
 # Install a complete local package, or fetch the pinned, verified release payload.
 set -Eeuo pipefail
 umask 077
-RELEASE_VERSION=0.1.12
+RELEASE_VERSION=0.1.13
 RELEASE_URL=https://github.com/skylink9119/skybyte-xray-manager/releases/download/v$RELEASE_VERSION
 
 download_manager(){
@@ -73,6 +73,13 @@ atomic(shortcut,(header+'exec bash '+shlex.quote(str(target))+' "$@"\n').encode(
 PY
 }
 
+confirm_dependencies(){
+ local answer
+ printf '\033[1;32mInstall base dependencies? / 安装基础依赖？[y/N]: \033[0m' >&2
+ IFS= read -r answer || return 1
+ [[ $answer =~ ^[[:space:]]*[Yy][[:space:]]*$ ]]
+}
+
 install_main() (
  (( EUID == 0 )) || { printf 'Please run as root / 请使用 root\n' >&2; return 1; }
  [[ $(uname -s) == Linux && -d /run/systemd/system ]] || { printf 'Ubuntu/Debian with systemd required\n' >&2; return 1; }
@@ -84,10 +91,7 @@ install_main() (
  for tool in python3 flock curl; do command -v "$tool" >/dev/null || missing=1; done
  [[ -s /etc/ssl/certs/ca-certificates.crt ]] || missing=1
  if (( missing )); then
-  local answer
-  printf '\033[1;32mInstall base dependencies? / 安装基础依赖？[YES]: \033[0m' >&2
-  IFS= read -r answer || return 1
-  [[ $answer =~ ^[Yy][Ee][Ss]$ ]] || return 1
+  confirm_dependencies || return 1
   apt-get -o APT::Update::Error-Mode=any update && apt-get install -y python3 util-linux curl ca-certificates || return 1
  fi
  # shellcheck disable=SC2317,SC2329 # Cleanup is invoked by EXIT, including after a download failure.

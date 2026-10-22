@@ -178,7 +178,7 @@ sys.exit(100 if 'update' in sys.argv else 0)
         log=self.fake_apt()
         script='source "$1"; command(){ if [[ $1 == -v && $2 == python3 ]]; then return 1; fi; builtin command "$@"; }; dependencies'
         result=subprocess.run(['bash','-c',script,'test',str(PROJECT/'xray-manager.sh')],
-            env=self.env,input='yes\n',capture_output=True,text=True)
+            env=self.env,input='y\n',capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0)
         calls=json.loads(log.read_text())
         self.assertEqual(len(calls),1)
@@ -189,7 +189,7 @@ sys.exit(100 if 'update' in sys.argv else 0)
         log=self.fake_apt()
         script='source "$1"; command(){ if [[ $1 == -v && $2 == qrencode ]]; then return 1; fi; builtin command "$@"; }; qr_nodes'
         result=subprocess.run(['bash','-c',script,'test',str(PROJECT/'xray-manager.sh')],
-            env=self.env,input='YES\n',capture_output=True,text=True)
+            env=self.env,input='Y\n',capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0)
         self.assertEqual(len(json.loads(log.read_text())),1)
 
@@ -208,14 +208,14 @@ sys.exit(100 if 'update' in sys.argv else 0)
 
     def test_uninstall_removes_owned_shortcut_and_preserves_backup(self):
         shortcut=self.uninstall_fixture()
-        result=self.shell('uninstall <<< YES')
+        result=self.shell('uninstall <<< Y')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertFalse(shortcut.exists())
         self.assertTrue(list((self.root/'backups').glob('*.tar.gz')))
 
     def test_uninstall_preserves_replaced_shortcut(self):
         shortcut=self.uninstall_fixture(foreign=True)
-        result=self.shell('uninstall <<< yes')
+        result=self.shell('uninstall <<< y')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(shortcut.read_text(),'foreign command')
 
@@ -223,7 +223,7 @@ sys.exit(100 if 'update' in sys.argv else 0)
         shortcut = self.uninstall_fixture(installed=False)
         note = self.root/'my-notes'; note.write_text('keep this')
         config = self.root/'config.json'; config.write_text('unmanaged configuration')
-        result = self.shell('uninstall <<< YES')
+        result = self.shell('uninstall <<< Y')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(shortcut.exists())
         self.assertFalse((self.base/'lib/manager.sh').exists())
@@ -237,7 +237,7 @@ sys.exit(100 if 'update' in sys.argv else 0)
         shortcut = self.uninstall_fixture()
         original = (self.root/'state.json').read_bytes()
         self.set_controller(active=True, fail_stop=True)
-        result = self.shell('uninstall <<< YES')
+        result = self.shell('uninstall <<< Y')
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(shortcut.exists())
         self.assertTrue((self.base/'lib/manager.sh').exists())
