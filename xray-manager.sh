@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.12
+VERSION=0.1.13
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -30,8 +30,8 @@ ask(){
  IFS= read -r result || return 1
  printf '%s' "$result"
 }
-confirmed(){ [[ $1 =~ ^[Yy][Ee][Ss]$ ]]; }
-confirm(){ local answer; answer=$(ask "$1（输入 YES 确认；回车取消）：" "$2 (type YES to confirm; Enter to cancel): ") || return 1; confirmed "$answer"; }
+confirmed(){ [[ $1 =~ ^[[:space:]]*[Yy][[:space:]]*$ ]]; }
+confirm(){ local answer; answer=$(ask "$1 [y/N]：" "$2 [y/N]: ") || return 1; confirmed "$answer"; }
 separator(){ printf '%s\n' '------------------------------------------------------------'; }
 show_banner(){
  printf '%s\n============================================================\n' "$CYAN"
@@ -78,7 +78,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.12"
+VERSION = "0.1.13"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -1673,7 +1673,7 @@ install_node(){
   cert=$(ask '已有可信 fullchain 证书文件绝对路径：' 'Absolute path to trusted fullchain certificate: ') || return 1
   private_key=$(ask '私钥文件绝对路径（不修改源文件）：' 'Absolute private-key path (source is preserved): ') || return 1
   local cdn
-  cdn=$(ask '通过 CDN 连接？输入 YES 开启，回车直连：' 'Use a CDN? YES to enable; Enter for direct: ') || return 1
+  cdn=$(ask '通过 CDN 连接？[y/N]：' 'Use a CDN? [y/N]: ') || return 1
   if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
   warn 'CDN 的 DNS、HTTPS 端口及回源 TLS 验证须在提供商后台配置。' 'Configure CDN DNS, supported HTTPS port and verified origin TLS at your provider.'
  else

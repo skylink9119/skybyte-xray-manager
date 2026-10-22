@@ -212,7 +212,7 @@ class NetworkMenuTests(TemporaryFixture):
 
     def test_custom_port_confirmation_and_cancellation_in_both_languages(self):
         for language in ['zh', 'en']:
-            result, calls = self.shell('4\n8443\npublic\nYES\n', language)
+            result, calls = self.shell('4\n8443\npublic\nY\n', language)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('firewall-allow --ports 8443 --zone public', calls)
             result, calls = self.shell('4\n8443\n\nno\n', language)
@@ -228,9 +228,9 @@ class NetworkMenuTests(TemporaryFixture):
     def test_bbr_requires_confirmation(self):
         result, calls = self.shell('7\nno\n')
         self.assertEqual(result.returncode, 0); self.assertFalse(calls)
-        result, calls = self.shell('7\nYES\n')
+        result, calls = self.shell('7\nY\n')
         self.assertEqual(result.returncode, 0); self.assertEqual(calls, ['bbr-enable', 'bbr-status'])
-        result, calls = self.shell('8\nYES\n')
+        result, calls = self.shell('8\nY\n')
         self.assertEqual(result.returncode, 0); self.assertEqual(calls, ['bbr-restore', 'bbr-status'])
 
     def test_grouped_menu_and_renumbered_status_and_all_ports_in_both_languages(self):
@@ -250,7 +250,7 @@ class NetworkMenuTests(TemporaryFixture):
             self.assertEqual(calls, ['firewall-status'])
             result, calls = self.shell('6\n', language)
             self.assertEqual(calls, ['bbr-status'])
-            result, calls = self.shell('3\n\nYES\n', language)
+            result, calls = self.shell('3\n\nY\n', language)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(calls, ['firewall-status', 'node-ports', 'firewall-allow'])
 
@@ -393,7 +393,7 @@ if network_menu; then exit 0; else exit 1; fi
 
     def test_install_then_enable_after_confirmation_in_both_languages(self):
         for language in ['zh','en']:
-            result, calls = self.shell('2\n\n80 443\nYES\n', language=language)
+            result, calls = self.shell('2\n\n80 443\nY\n', language=language)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertIn('apt-get install -y ufw', calls)
             setup = 'firewall-setup --ssh-ports 2222 --ports 80 443'
@@ -406,7 +406,7 @@ if network_menu; then exit 0; else exit 1; fi
         self.assertFalse(any(c.startswith('apt-') or c.startswith('firewall-setup --') for c in calls))
 
     def test_failed_package_install_does_not_enable(self):
-        result, calls = self.shell('2\n\n\nYES\n', apt_fail=True)
+        result, calls = self.shell('2\n\n\nY\n', apt_fail=True)
         self.assertNotEqual(result.returncode,0)
         self.assertFalse(any(c.startswith('firewall-setup --') for c in calls))
 
@@ -663,12 +663,12 @@ if network_menu; then exit 0; else exit 1; fi
 
     def test_remove_after_verified_disable_in_both_languages(self):
         for language in ['zh','en']:
-            result,calls = self.shell('5\n2\nYES\n',language=language,verify='config-files')
+            result,calls = self.shell('5\n2\nY\n',language=language,verify='config-files')
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(calls,['ufw-remove-plan','ufw-state','ufw-disable','dpkg --remove ufw','ufw-package-state'])
 
     def test_only_disable_does_not_remove_package(self):
-        result,calls = self.shell('5\n1\nYES\n')
+        result,calls = self.shell('5\n1\nY\n')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(calls,['ufw-state','ufw-disable'])
 
@@ -681,12 +681,12 @@ if network_menu; then exit 0; else exit 1; fi
 
     def test_disable_failure_prevents_removal(self):
         for option in ['2','3']:
-            result,calls = self.shell('5\n'+option+'\nYES\n',disable_fail=True)
+            result,calls = self.shell('5\n'+option+'\nY\n',disable_fail=True)
             self.assertNotEqual(result.returncode,0)
             self.assertFalse(any(c.startswith('dpkg ') for c in calls))
 
     def test_removal_failure_does_not_claim_success_or_reenable(self):
-        result,calls = self.shell('5\n2\nYES\n',language='en',remove_fail=True)
+        result,calls = self.shell('5\n2\nY\n',language='en',remove_fail=True)
         self.assertNotEqual(result.returncode,0)
         self.assertIn('package removal did not complete',result.stderr)
         self.assertNotIn('ufw-package-state',calls)
@@ -694,7 +694,7 @@ if network_menu; then exit 0; else exit 1; fi
         self.assertEqual(calls.count('ufw-disable'),1)
 
     def test_unverified_removal_is_not_success(self):
-        result,calls = self.shell('5\n2\nYES\n',verify='installed')
+        result,calls = self.shell('5\n2\nY\n',verify='installed')
         self.assertNotEqual(result.returncode,0)
         self.assertIn('ufw-package-state',calls)
 
@@ -705,7 +705,7 @@ if network_menu; then exit 0; else exit 1; fi
 
     def test_purge_after_verified_disable_in_both_languages(self):
         for language in ['zh','en']:
-            result,calls = self.shell('5\n3\nYES\n',language=language)
+            result,calls = self.shell('5\n3\nY\n',language=language)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(calls,['ufw-remove-plan --purge','ufw-state','ufw-disable',
                                     'dpkg --purge ufw','ufw-package-state'])
@@ -713,19 +713,19 @@ if network_menu; then exit 0; else exit 1; fi
 
     def test_purge_remaining_configuration_skips_missing_binary_and_disable(self):
         for language in ['zh','en']:
-            result,calls = self.shell('5\n3\nYES\n',language=language,plan='config-files')
+            result,calls = self.shell('5\n3\nY\n',language=language,plan='config-files')
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(calls,['ufw-remove-plan --purge','dpkg --purge ufw','ufw-package-state'])
 
     def test_purge_preflight_failure_or_unknown_plan_makes_no_changes(self):
         for settings in [{'plan_fail':True}, {'plan':'unknown'}]:
-            result,calls = self.shell('5\n3\nYES\n',**settings)
+            result,calls = self.shell('5\n3\nY\n',**settings)
             self.assertNotEqual(result.returncode,0)
             self.assertEqual(calls,['ufw-remove-plan --purge'])
 
     def test_purge_failure_reports_partial_state_without_success_or_reenable(self):
         for plan in ['ready','config-files']:
-            result,calls = self.shell('5\n3\nYES\n',language='en',plan=plan,remove_fail=True)
+            result,calls = self.shell('5\n3\nY\n',language='en',plan=plan,remove_fail=True)
             self.assertNotEqual(result.returncode,0)
             self.assertIn('purge did not complete',result.stderr)
             self.assertIn('some files may already be removed',result.stderr)
@@ -734,7 +734,7 @@ if network_menu; then exit 0; else exit 1; fi
             self.assertFalse(any('enable' in c for c in calls))
 
     def test_purge_retained_configuration_is_not_success(self):
-        result,calls = self.shell('5\n3\nYES\n',verify='config-files',language='en')
+        result,calls = self.shell('5\n3\nY\n',verify='config-files',language='en')
         self.assertNotEqual(result.returncode,0)
         self.assertIn('could not be verified',result.stderr)
 

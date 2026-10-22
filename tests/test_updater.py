@@ -192,7 +192,7 @@ LANGUAGE="$2"
 
     def test_confirmation_and_success_exit_menu_in_both_languages(self):
         for language in ['zh', 'en']:
-            result, calls = self.shell('13\nYES\n', language=language, menu=True)
+            result, calls = self.shell('13\nY\n', language=language, menu=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(len(calls), 2)
             self.assertIn('manager-update --release v0.1.4 --file', calls[1])
@@ -204,7 +204,7 @@ LANGUAGE="$2"
             self.assertEqual(calls, ['manager-latest'])
 
     def test_failed_update_keeps_menu_usable(self):
-        result, calls = self.shell('13\nYES\n0\n', fail=True, menu=True, language='en')
+        result, calls = self.shell('13\nY\n0\n', fail=True, menu=True, language='en')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Manager update did not complete', result.stderr + result.stdout)
         self.assertEqual(len(calls), 2)

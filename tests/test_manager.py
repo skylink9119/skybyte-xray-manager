@@ -154,12 +154,14 @@ class ValidationTests(unittest.TestCase):
         self.assertIn('NoNewPrivileges=true',unit)
         self.assertIn('ProtectSystem=strict',unit)
 
-    def test_yes_is_case_insensitive(self):
-        for value in ['yes','YES','Yes','yEs']:
+    def test_single_letter_confirmation_is_case_insensitive(self):
+        for value in ['y','Y','  y  ','\tY\t']:
             result=subprocess.run(['bash','-c','source "$1"; confirmed "$2"','test',str(PROJECT/'xray-manager.sh'),value])
             self.assertEqual(result.returncode,0)
-        result=subprocess.run(['bash','-c','source "$1"; confirmed no','test',str(PROJECT/'xray-manager.sh')])
-        self.assertNotEqual(result.returncode,0)
+        for value in ['', 'n', 'N', 'no', 'yes', 'YES', 'yy', 'y e s']:
+            result=subprocess.run(['bash','-c','source "$1"; confirmed "$2" && printf EXECUTED','test',str(PROJECT/'xray-manager.sh'),value],capture_output=True,text=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertNotIn('EXECUTED',result.stdout)
 
     def test_menu_newlines_and_no_color(self):
         result=subprocess.run(['bash','-c','source "$1"; menu "one\\ntwo" "one\\ntwo"','test',str(PROJECT/'xray-manager.sh')],capture_output=True,text=True,env={**os.environ,'NO_COLOR':'1'})
@@ -205,7 +207,7 @@ install_node
         return result, calls
 
     def inputs(self, selection, target='', kind='1'):
-        return kind+'\n\n\n\n203.0.113.10\n'+selection+target+'\n'+('\n\n' if kind == '2' else '')+'YES\n'
+        return kind+'\n\n\n\n203.0.113.10\n'+selection+target+'\n'+('\n\n' if kind == '2' else '')+'Y\n'
 
     def test_enter_keeps_microsoft_default_in_both_languages(self):
         for language in ['zh','en']:
@@ -265,16 +267,15 @@ install_node
             self.assertIn('probe --target www.apple.com:443 --sni www.apple.com', calls)
             self.assertFalse(any(call.startswith(('ensure-binary','prepare ','apply ')) for call in calls))
 
-    def test_install_confirmation_cancellation_and_yes_have_clear_results(self):
+    def test_install_confirmation_cancellation_and_y_have_clear_results(self):
         for language in ['zh','en']:
-            for answer in ['', 'no', 'yes']:
-                inputs = self.inputs('2\n').removesuffix('YES\n')+answer+'\n'
+            for answer in ['', 'n', 'N', 'no', 'yes', 'YES', 'y', 'Y']:
+                inputs = self.inputs('2\n').removesuffix('Y\n')+answer+'\n'
                 result, calls = self.shell(inputs, language)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn('输入 YES 确认；回车取消' if language == 'zh' else
-                              'type YES to confirm; Enter to cancel', result.stderr)
+                self.assertIn('[y/N]', result.stderr)
                 self.assertNotIn('[YES]', result.stderr)
-                if answer == 'yes':
+                if answer in ['y','Y']:
                     self.assertIn('ensure-binary', calls)
                     self.assertIn('apply /mock-stage yes', calls)
                 else:
@@ -282,7 +283,7 @@ install_node
                     self.assertFalse(any(call.startswith(('ensure-binary','prepare ','apply ')) for call in calls))
 
     def test_tls_certificate_flow_does_not_show_reality_presets(self):
-        result, calls = self.shell('3\n\n\n\n203.0.113.10\ntls.example.com\n/cert.pem\n/key.pem\n\n\n\nYES\n')
+        result, calls = self.shell('3\n\n\n\n203.0.113.10\ntls.example.com\n/cert.pem\n/key.pem\n\n\n\nY\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('Microsoft', result.stdout+result.stderr)
         self.assertFalse(any(call.startswith('probe ') for call in calls))
@@ -290,6 +291,17 @@ install_node
         self.assertIn('--kind xhttp-tls', prepared)
         self.assertIn('--kind xhttp-tls', calls[0])
         self.assertIn('--cert /cert.pem --key /key.pem', prepared)
+
+    def test_cdn_choice_uses_y_and_defaults_to_direct(self):
+        for language in ['zh','en']:
+            for answer in ['y','Y','n','N','']:
+                inputs='3\n\n\n\n203.0.113.10\ntls.example.com\n/cert.pem\n/key.pem\n'+answer+'\n\n\ny\n'
+                result,calls=self.shell(inputs,language)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn('[y/N]',result.stderr)
+                prepared=next(call for call in calls if call.startswith('prepare '))
+                self.assertEqual('--cdn' in prepared,answer in ['y','Y'])
+                self.assertIn('apply /mock-stage yes',calls)
 
 
 class InstallationInputTests(TemporaryFixture):

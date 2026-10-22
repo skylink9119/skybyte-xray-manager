@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.13 — 2026-10-23
+
+- Standardize manager and installer dependency confirmations as [y/N]; y/Y confirms, while Enter, n/N and invalid input cancel the action. CDN selection uses y/Y to enable and defaults to direct connections.
+- Add a one-line curl bootstrap, pinned installer download, private temporary staging, syntax validation and cleanup; keep README commands and packaged assets synchronized.
+- Cover affirmative, cancellation, invalid and EOF input, including node installation, CDN choice and installer dependencies.
+
 ## 0.1.12 — 2026-10-19
 
 - Reuse the sing-box project's SKYBYTE ASCII logo in the Xray main menu, retaining bilingual text and NO_COLOR handling.
