@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.13
+VERSION=0.1.14
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -45,6 +45,11 @@ show_banner(){
 LOGO
  printf '               SKYBYTE Xray Manager v%s\n                Reality · Vision · XHTTP\n' "$VERSION"
  printf '============================================================%s\n' "$RESET"
+}
+show_startup_info(){
+ separator
+ helper overview --language "$LANGUAGE" || warn '状态概览暂不可用，可通过菜单 4 或 12 查看详情。' 'Overview unavailable; use menu 4 or 12 for details.'
+ separator
 }
 
 # BUILD_HELPER
@@ -608,12 +613,115 @@ update_manager(){
  fi
  say '管理脚本已更新，旧脚本保存为 manager.previous.sh。请重新输入 xr。' 'Manager updated; the old script is saved as manager.previous.sh. Run xr again.'
 }
+warp_choose_profile(){
+ local selection profile domains
+ menu '分流平台\n1 Netflix + Disney+ + ChatGPT + Gemini（默认）\n2 仅 Netflix\n3 仅 Disney+\n4 仅 ChatGPT\n5 仅 Gemini\n6 自定义域名后缀\n0 返回' 'Routing profile\n1 Netflix + Disney+ + ChatGPT + Gemini (default)\n2 Netflix only\n3 Disney+ only\n4 ChatGPT only\n5 Gemini only\n6 Custom domain suffixes\n0 Back' >&2
+ selection=$(ask '选择 [1]：' 'Choose [1]: ') || return 1
+ case ${selection:-1} in
+  1) profile=all;; 2) profile=netflix;; 3) profile=disney;; 4) profile=chatgpt;; 5) profile=gemini;;
+  6) domains=$(ask '域名后缀（空格分隔，不含通配符）：' 'Domain suffixes (space-separated, no wildcards): ') || return 1
+     [[ -n $domains ]] || return 1; printf '%s\n' "$domains"; return;;
+  *) return 1;;
+ esac
+ helper warp-profile --profile "$profile"
+}
+warp_apply(){
+ local proxy_port=$1 domains stage
+ local suffixes=()
+ helper node-ports >/dev/null || return 1
+ domains=$(warp_choose_profile) || return 0
+ read -r -a suffixes <<< "$domains"
+ warn '仅匹配的 TCP 域名流量使用 WARP，其余流量直连；匹配的 UDP 拒绝以便应用回退 TCP。WARP 出口通过不代表平台解锁。' 'Only matching TCP domains use WARP; other traffic stays direct. Matching UDP is blocked for TCP fallback. Verified WARP egress does not prove platform access.'
+ confirm '应用 WARP 分流并重启原先运行的节点？' 'Apply WARP routing and restart previously running nodes?' || return 0
+ helper warp-check --proxy-port "$proxy_port" || return 1
+ stage=$(helper warp-prepare --proxy-port "$proxy_port" --domains "${suffixes[@]}") || return 1
+ apply_stage "$stage" || return 1
+ say 'WARP 分流已应用。可用选项 5 对比直连与 WARP 的平台响应。' 'WARP routing applied. Use option 5 to compare direct and WARP platform responses.'
+}
+warp_install_client(){
+ local os_id code proxy_port tmp item listeners attempt ready=0
+ helper node-ports >/dev/null || return 1
+ if command -v warp-cli >/dev/null; then
+  warn '已安装 WARP 客户端，请选择“使用已有本机代理”，保留现有注册和设置。' 'WARP is already installed; use the existing local proxy option to retain registration and settings.'
+  return 1
+ fi
+ if [[ -e ${SKYBYTE_WARP_DATA_DIR:-/var/lib/cloudflare-warp} || -L ${SKYBYTE_WARP_DATA_DIR:-/var/lib/cloudflare-warp} ]]; then
+  error '发现已有 WARP 数据，请先手动核对注册与模式，避免启动已有全局连接。' 'Existing WARP data found; inspect registration and mode before starting a potentially global connection.'
+  return 1
+ fi
+ os_id=$(awk -F= '$1=="ID" {gsub(/"/,"",$2);print $2}' /etc/os-release)
+ code=$(awk -F= '$1=="VERSION_CODENAME" {gsub(/"/,"",$2);print $2}' /etc/os-release)
+ case $os_id:$code in ubuntu:jammy|ubuntu:noble|ubuntu:resolute|debian:bookworm|debian:trixie) ;; *) error '当前系统版本不在官方 WARP 自动安装支持列表中。' 'This OS release is not supported for automatic WARP installation.'; return 1;; esac
+ local repo=/etc/apt/sources.list.d/skybyte-xray-cloudflare-warp.list key=/usr/share/keyrings/skybyte-xray-cloudflare-warp.gpg
+ for item in "$repo" "$key"; do [[ ! -e $item && ! -L $item ]] || { error 'WARP 软件源文件已存在，请先核对。' 'WARP repository files already exist; inspect them first.'; return 1; }; done
+ say '安装官方 Cloudflare WARP，仅启用本机代理模式。条款：https://www.cloudflare.com/application/terms/ 。卸载管理器会保留 WARP 软件和连接。' 'Install official Cloudflare WARP in local proxy mode. Terms: https://www.cloudflare.com/application/terms/ . Removing the manager retains WARP and its connection.'
+ confirm '安装、注册并接受 WARP 条款？' 'Install, register and accept WARP terms?' || return 0
+ proxy_port=$(ask '本机 SOCKS5 端口 [40000]：' 'Local SOCKS5 port [40000]: ') || return 0
+ proxy_port=${proxy_port:-40000}
+ [[ $proxy_port =~ ^[0-9]{4,5}$ ]] && ((10#$proxy_port>=1024 && 10#$proxy_port<=65535)) || return 1
+ proxy_port=$((10#$proxy_port))
+ # Validate node collisions before installing packages or writing repository files.
+ python3 - "$SKYBYTE_XRAY_DIR/state.json" "$proxy_port" <<'PY_WARP_PORT' || return 1
+import json,sys
+assert all(n['port']!=int(sys.argv[2]) for n in json.load(open(sys.argv[1]))['nodes'].values()), 'Proxy conflicts with a node port / 代理与节点端口冲突'
+PY_WARP_PORT
+ apt_refresh && apt-get install -y curl ca-certificates gnupg iproute2 || return 1
+ listeners=$(ss -H -ltn "( sport = :$proxy_port )") || return 1
+ [[ -z $listeners ]] || { error '代理端口已被占用。' 'Proxy port is occupied.'; return 1; }
+ tmp=$(mktemp -d "$SKYBYTE_XRAY_DIR/.warp-install.XXXXXX") || return 1
+ if ! curl -q -fsSL --noproxy '*' --proto '=https' --proto-redir '=https' --max-time 30 https://pkg.cloudflareclient.com/pubkey.gpg -o "$tmp/key" ||
+    ! gpg --batch --yes --dearmor --output "$tmp/keyring" "$tmp/key"; then rm -rf -- "$tmp"; return 1; fi
+ install -m 644 "$tmp/keyring" "$key" || { rm -rf -- "$tmp"; return 1; }
+ printf 'deb [signed-by=%s] https://pkg.cloudflareclient.com/ %s main\n' "$key" "$code" > "$repo"
+ chmod 644 "$repo"; rm -rf -- "$tmp"
+ apt_refresh && apt-get install -y cloudflare-warp || return 1
+ systemctl enable --now warp-svc.service || return 1
+ if warp-cli --accept-tos registration show >/dev/null 2>&1; then
+  error '发现已有 WARP 注册，保留现有设置，请手动配置代理后选择选项 2。' 'Existing WARP registration found; retained. Configure its proxy manually and choose option 2.'; return 1
+ fi
+ warp-cli --accept-tos registration new >/dev/null && warp-cli --accept-tos mode proxy && warp-cli --accept-tos proxy port "$proxy_port" && warp-cli --accept-tos connect || return 1
+ for ((attempt=0; attempt<3; attempt++)); do
+  if helper warp-check --proxy-port "$proxy_port"; then ready=1; break; fi
+  sleep 2
+ done
+ ((ready)) || { error 'WARP 尚未就绪，节点分流未改变。可稍后选择选项 2 重试。' 'WARP is not ready; node routing is unchanged. Retry with option 2 later.'; return 1; }
+ warp_apply "$proxy_port"
+}
+warp_platform_test(){
+ local proxy_port=$1
+ helper warp-check --proxy-port "$proxy_port" || return 1
+ say '将匿名访问 Netflix、Disney+、ChatGPT 和 Gemini，对比直连 IPv4 与 WARP；不登录账号，页面可访问不等于播放或账号可用。' 'Compare anonymous Netflix, Disney+, ChatGPT and Gemini responses over direct IPv4 and WARP. No account login; page access does not verify playback or account access.'
+ python3 - "$SKYBYTE_XRAY_DIR/reports" "$proxy_port" "$LANGUAGE" <<'PY_WARP_MEDIA'
+# BUILD_MEDIA
+import sys
+PROBES={key:value for key,value in PROBES.items() if key in ('Netflix','Disney+','ChatGPT','Gemini')}
+run(['4','warp'],sys.argv[1],int(sys.argv[2]),'en_US' if sys.argv[3]=='en' else 'zh_CN')
+PY_WARP_MEDIA
+}
+warp_menu(){
+ local choice proxy_port stage
+ helper warp-status || return 1
+ menu 'WARP 分流与平台检测\n1 安装官方 WARP 本机代理\n2 使用已有本机代理 / 修改分流平台\n3 关闭 WARP 分流，恢复直连\n4 检查 WARP 出口\n5 Netflix / Disney+ / ChatGPT / Gemini 直连与 WARP 对比\n0 返回' 'WARP routing and platform tests\n1 Install official WARP local proxy\n2 Existing local proxy / change routing profile\n3 Disable WARP routing, restore direct\n4 Verify WARP egress\n5 Compare Netflix / Disney+ / ChatGPT / Gemini over direct and WARP\n0 Back'
+ choice=$(ask '> ' '> ') || return 0
+ case $choice in
+  1) warp_install_client;;
+  2|4|5)
+   proxy_port=$(ask '本机 SOCKS5 端口 [40000]：' 'Local SOCKS5 port [40000]: ') || return 0
+   proxy_port=${proxy_port:-40000}
+   case $choice in 2) warp_apply "$proxy_port";; 4) helper warp-check --proxy-port "$proxy_port";; 5) warp_platform_test "$proxy_port";; esac;;
+  3) confirm '关闭本项目 WARP 分流？WARP 软件和其他项目保持原样。' 'Disable WARP routing for this project? WARP and other projects are retained.' || return 0
+     stage=$(helper warp-prepare --disable) || return 1
+     apply_stage "$stage";;
+  0) return 0;; *) return 1;;
+ esac
+}
 main_menu(){
  while :; do
   show_banner
+  show_startup_info
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
-  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n13. 更新管理脚本\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n13. Update manager script\n0. Exit'
+  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n13. 更新管理脚本\n14. WARP 分流 / 平台检测\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n13. Update manager script\n14. WARP routing / platform tests\n0. Exit'
   local choice
   choice=$(ask '请选择：' 'Choose: ') || return 0
   case $choice in
@@ -624,6 +732,7 @@ main_menu(){
    9) guide;; 10) choose_language || true;; 11) uninstall || error '卸载未完成。' 'Uninstall did not complete.';;
    12) network_menu || error '网络设置未完成，具体原因见上方提示。' 'Network settings did not complete; see the reason above.';;
    13) if update_manager; then return 0; fi;; 0) return 0;;
+   14) warp_menu || error 'WARP 操作未完成，节点分流已保留或回退；具体原因见上方提示。' 'WARP operation incomplete; node routing retained or restored. See the reason above.';;
    *) warn '选项无效。' 'Invalid option.';;
   esac
  done

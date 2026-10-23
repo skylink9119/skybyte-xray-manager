@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.13
+VERSION=0.1.14
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -46,6 +46,11 @@ LOGO
  printf '               SKYBYTE Xray Manager v%s\n                Reality · Vision · XHTTP\n' "$VERSION"
  printf '============================================================%s\n' "$RESET"
 }
+show_startup_info(){
+ separator
+ helper overview --language "$LANGUAGE" || warn '状态概览暂不可用，可通过菜单 4 或 12 查看详情。' 'Overview unavailable; use menu 4 or 12 for details.'
+ separator
+}
 
 helper(){ python3 - "$@" <<'SKYBYTE_PYTHON'
 # Copyright (C) 2026 SKYBYTE (skylink9119)
@@ -63,7 +68,9 @@ import io
 import ipaddress
 import json
 import os
+import platform
 import re
+import shlex
 import shutil
 import socket
 import ssl
@@ -78,11 +85,17 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.13"
+VERSION = "0.1.14"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
 KINDS = ("vision", "xhttp-reality", "xhttp-tls")
+WARP_PROFILES = {
+    "netflix": ["netflix.com", "netflix.net", "nflxext.com", "nflximg.com", "nflximg.net", "nflxso.net", "nflxvideo.net"],
+    "disney": ["disneyplus.com", "disney-plus.net", "dssott.com", "bamgrid.com"],
+    "chatgpt": ["openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com"],
+    "gemini": ["gemini.google.com", "aistudio.google.com", "generativelanguage.googleapis.com"],
+}
 MODES = ("auto", "packet-up", "stream-up", "stream-one")
 MAX_ARCHIVE = 16 * 1024 * 1024
 
@@ -204,8 +217,15 @@ def new_keys(binary):
 
 
 def validate_state(state):
-    if not isinstance(state, dict) or set(state) != {"schema", "nodes"} or state["schema"] != 1:
+    if not isinstance(state, dict) or set(state) not in ({"schema", "nodes"}, {"schema", "nodes", "warp"}) or state["schema"] != 1:
         raise ValueError("Unknown state format / 非托管状态格式")
+    if "warp" in state:
+        warp = state["warp"]
+        if not isinstance(warp, dict) or set(warp) != {"port", "domains"} or type(warp["port"]) is not int or not 1024 <= warp["port"] <= 65535:
+            raise ValueError("Invalid WARP proxy / WARP 代理配置无效")
+        domains = warp["domains"]
+        if not isinstance(domains, list) or not 1 <= len(domains) <= 128 or any(not isinstance(d, str) or domain(d) != d or "." not in d for d in domains) or len(set(domains)) != len(domains):
+            raise ValueError("Invalid WARP domain suffixes / WARP 域名后缀无效")
     if not isinstance(state["nodes"], dict) or not set(state["nodes"]) <= set(KINDS):
         raise ValueError("Invalid protocol state")
     ports = set()
@@ -223,6 +243,8 @@ def validate_state(state):
         if p in ports:
             raise ValueError("Duplicate TCP port / TCP 端口冲突")
         ports.add(p)
+        if "warp" in state and p == state["warp"]["port"]:
+            raise ValueError("WARP proxy conflicts with a node port / WARP 代理与节点端口冲突")
         address(node["address"])
         domain(node["sni"])
         if node["listen"] not in ("0.0.0.0", "::", "127.0.0.1", "::1"):
@@ -268,10 +290,61 @@ def server_config(state, root):
                 "serverNames": [node["sni"]], "privateKey": node["private"], "shortIds": [node["short_id"]]})
         inbounds.append({"tag": kind, "listen": node["listen"], "port": node["port"], "protocol": "vless",
                          "settings": {"clients": [user], "decryption": "none"}, "streamSettings": stream})
-    return {"log": {"loglevel": "warning"}, "inbounds": inbounds,
+    result = {"log": {"loglevel": "warning"}, "inbounds": inbounds,
             "outbounds": [{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}],
             "routing": {"domainStrategy": "IPOnDemand", "rules": [{"type": "field", "ip": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
                 "192.168.0.0/16", "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"], "outboundTag": "block"}]}}
+    if "warp" in state:
+        warp = state["warp"]
+        result["outbounds"].append({"protocol": "socks", "tag": "warp", "settings": {
+            "servers": [{"address": "127.0.0.1", "port": warp["port"]}]}})
+        domains = ["domain:" + suffix for suffix in warp["domains"]]
+        result["routing"]["rules"] += [
+            {"type": "field", "network": "udp", "domain": domains, "outboundTag": "block"},
+            {"type": "field", "network": "tcp", "domain": domains, "outboundTag": "warp"}]
+        for inbound in inbounds:
+            inbound["sniffing"] = {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": True}
+    return result
+
+
+def warp_prepare(root, binary, number, domains, disable=False):
+    ensure_owned(root)
+    state = copy.deepcopy(load_state(root))
+    if not state["nodes"] and not disable:
+        raise ValueError("Install a node before configuring WARP / 请先安装节点，再设置 WARP 分流")
+    if disable:
+        state.pop("warp", None)
+    else:
+        state["warp"] = {"port": number, "domains": list(dict.fromkeys(domains))}
+    validate_state(state)
+    stage = make_stage(root, state)
+    try:
+        finish_stage(stage, state, binary)
+        return stage
+    except BaseException:
+        shutil.rmtree(stage)
+        raise
+
+
+def warp_verify(number):
+    number = port(number)
+    if number < 1024:
+        raise ValueError("WARP proxy port must be 1024–65535 / WARP 代理端口须为 1024–65535")
+    listeners = system_command(["ss", "-H", "-ltn", f"( sport = :{number} )"]).stdout.splitlines()
+    if not listeners or any(len(line.split()) < 4 or line.split()[3] not in (
+            f"127.0.0.1:{number}", f"[::1]:{number}", f"::1:{number}") for line in listeners):
+        raise ValueError("WARP proxy must listen only on loopback / WARP 代理须已启动且仅监听回环地址")
+    result = system_command(["curl", "-q", "-fsSL", "--noproxy", "", "--proxy", f"socks5h://127.0.0.1:{number}",
+        "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "4", "--max-time", "10", "--max-filesize", "65536",
+        "https://www.cloudflare.com/cdn-cgi/trace"])
+    trace = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    try:
+        valid = trace.get("warp") in ("on", "plus") and ipaddress.ip_address(trace.get("ip", "")).is_global and re.fullmatch("[A-Z]{2}", trace.get("loc", ""))
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("WARP egress could not be verified; routing unchanged / WARP 出口验证未通过，分流保持原样")
+    return trace["ip"], trace["loc"]
 
 
 def client_config(kind, node, socks_port=10808):
@@ -693,6 +766,165 @@ def error_message(error):
 def system_command(arguments, check=True):
     return subprocess.run(arguments, check=check, capture_output=True, text=True,
                           timeout=30, env={**os.environ, "LC_ALL": "C"})
+
+
+def overview_read(path):
+    try:
+        return Path(path).read_text(errors="replace")
+    except OSError:
+        return ""
+
+
+def overview_command(arguments):
+    """Best-effort local probes must never prevent opening the menu."""
+    try:
+        result = subprocess.run(arguments, capture_output=True, text=True, timeout=2,
+                                env={**os.environ, "LC_ALL": "C"})
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def startup_overview(root, binary, language="zh"):
+    def tr(zh, en):
+        return en if language == "en" else zh
+
+    unknown = tr("未知", "Unknown")
+
+    def clean(value):
+        # Local host/package metadata is untrusted terminal text, too.
+        value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(value))
+        return " ".join("".join(c if c.isprintable() else " " for c in value).split())[:240] or unknown
+
+    def gib(value):
+        return f"{value / (1024 ** 3):.2f} GiB"
+
+    os_name = unknown
+    for line in overview_read("/etc/os-release").splitlines():
+        if line.startswith("PRETTY_NAME="):
+            try:
+                os_name = " ".join(shlex.split(line.split("=", 1)[1])) or unknown
+            except ValueError:
+                pass
+            break
+    machine = platform.uname()
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine.machine, machine.machine)
+    cpu = next((line.split(":", 1)[1].strip() for line in overview_read("/proc/cpuinfo").splitlines()
+                if line.split(":", 1)[0].strip() in ("model name", "Hardware", "Processor") and ":" in line), unknown)
+    memory = {}
+    for line in overview_read("/proc/meminfo").splitlines():
+        match = re.fullmatch(r"(\w+):\s+(\d+) kB", line)
+        if match:
+            memory[match[1]] = int(match[2]) * 1024
+    total = memory.get("MemTotal", 0)
+    available = memory.get("MemAvailable", sum(memory.get(key, 0) for key in ("MemFree", "Buffers", "Cached")))
+    used = max(0, total - min(total, available))
+    memory_text = f"{gib(used)} / {gib(total)}" if total else unknown
+    swap = memory.get("SwapTotal", 0)
+    swap_text = f"{gib(max(0, swap - memory.get('SwapFree', 0)))} / {gib(swap)}" if swap else tr("未配置", "Not configured")
+    try:
+        disk = shutil.disk_usage("/")
+        disk_text = f"{gib(disk.used)} / {gib(disk.total)} ({disk.used / disk.total:.0%})" if disk.total else unknown
+    except OSError:
+        disk_text = unknown
+    try:
+        minutes = int(float(overview_read("/proc/uptime").split()[0])) // 60
+        uptime = tr(f"{minutes // 1440} 天 {minutes // 60 % 24} 小时 {minutes % 60} 分", f"{minutes // 1440}d {minutes // 60 % 24}h {minutes % 60}m")
+    except (ValueError, IndexError):
+        uptime = unknown
+    load = " / ".join(overview_read("/proc/loadavg").split()[:3]) or unknown
+
+    components = [("UFW", "ufw", "ufw.service"), ("firewalld", "firewall-cmd", "firewalld.service"),
+                  (tr("WARP 客户端", "WARP client"), "warp-cli", "warp-svc.service"),
+                  ("Fail2ban", "fail2ban-client", "fail2ban.service"), (tr("二维码工具", "QR utility"), "qrencode", None)]
+    present = {tool: bool(shutil.which(tool)) for _, tool, _ in components}
+    units = ["skybyte-xray.service", *[unit for _, tool, unit in components if unit and present[tool]]]
+    service_output = overview_command(["systemctl", "show", "--no-pager", "--property=Id,LoadState,ActiveState,UnitFileState", *units])
+    services = {}
+    for block in service_output.split("\n\n"):
+        properties = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+        if properties.get("Id") in units:
+            services[properties["Id"]] = properties
+
+    def service_status(unit, installed):
+        properties = services.get(unit, {})
+        active = properties.get("ActiveState")
+        if active in ("active", "reloading"):
+            return tr("运行中", "Running")
+        if active == "failed":
+            return tr("运行失败", "Failed")
+        if active in ("activating", "deactivating"):
+            return tr("启动中" if active == "activating" else "停止中", "Starting" if active == "activating" else "Stopping")
+        if properties.get("LoadState") == "not-found":
+            return tr("已安装，服务未注册", "Installed, service not registered") if installed else tr("未安装", "Not installed")
+        if active == "inactive":
+            return tr("已安装，未运行", "Installed, inactive")
+        return tr("已安装，状态未知", "Installed, status unknown") if installed else unknown
+
+    core_installed = False
+    core_version = tr("未安装", "Not installed")
+    try:
+        checked_path(binary)
+        marker = checked_path(binary.parent / ".owner")
+        core_installed = binary.is_file() and os.access(binary, os.X_OK) and marker.read_text() == OWNER
+    except (OSError, ValueError):
+        pass
+    if core_installed:
+        version_output = overview_command([str(binary), "version"])
+        match = re.search(r"^Xray\s+(\S+)", version_output)
+        core_version = match[1] if match else unknown
+    main_service = services.get("skybyte-xray.service", {})
+    enabled = main_service.get("UnitFileState", "")
+    boot = tr("已启用", "Enabled") if enabled in ("enabled", "enabled-runtime") else (
+        tr("未启用", "Disabled") if enabled in ("disabled", "masked", "masked-runtime", "static", "indirect") else unknown)
+
+    nodes = tr("尚未安装节点", "No nodes installed")
+    warp_text = tr("未启用分流", "Routing disabled")
+    try:
+        checked_path(root)
+        if root.exists():
+            ensure_owned(root)
+            state = load_state(root)
+            if "warp" in state:
+                warp_text = tr("已配置域名分流", "Domain routing configured") + f" | 127.0.0.1:{state['warp']['port']} | {len(state['warp']['domains'])} " + tr("个后缀（连通性见菜单 14）", "suffixes (test connectivity in menu 14)")
+            names = {"vision": "Reality + Vision", "xhttp-reality": "XHTTP + Reality", "xhttp-tls": "XHTTP + TLS/CDN"}
+            nodes = " | ".join(f"{names[kind]}: TCP {node['port']}" for kind, node in state["nodes"].items()) or nodes
+    except (OSError, ValueError, KeyError, TypeError):
+        nodes = tr("配置读取失败，请检查服务与日志", "Configuration unreadable; check service and logs")
+
+    algorithm = overview_read("/proc/sys/net/ipv4/tcp_congestion_control").strip()
+    qdisc = overview_read("/proc/sys/net/core/default_qdisc").strip()
+    bbr = tr("已开启 BBR 加速", "BBR acceleration enabled") if algorithm == "bbr" else (
+        tr("未开启 BBR 加速", "BBR acceleration not enabled") if algorithm else unknown)
+    if algorithm:
+        bbr += f" ({algorithm}" + (f" / {qdisc}" if qdisc else "") + ")"
+    statuses = []
+    for label, tool, unit in components:
+        if not present[tool]:
+            status = tr("未安装", "Not installed")
+        elif tool == "ufw":
+            ufw = overview_command(["ufw", "status"])
+            status = tr("已启用", "Enabled") if ufw.startswith("Status: active") else (
+                tr("已安装，未启用", "Installed, disabled") if ufw.startswith("Status: inactive") else tr("已安装，状态未知", "Installed, status unknown"))
+        else:
+            status = service_status(unit, True) if unit else tr("已安装", "Installed")
+        statuses.append(f"{label}: {status}")
+    lines = [tr("服务器配置", "Server configuration"),
+             f"  {tr('系统', 'OS')}: {os_name} | {tr('架构', 'Architecture')}: {arch}",
+             f"  {tr('内核', 'Kernel')}: {machine.release}",
+             f"  CPU: {cpu} ({os.cpu_count() or unknown} vCPU)",
+             f"  {tr('内存', 'Memory')}: {memory_text} | Swap: {swap_text}",
+             f"  {tr('根分区', 'Root disk')}: {disk_text}",
+             f"  {tr('运行时间', 'Uptime')}: {uptime} | {tr('负载 (1/5/15 分)', 'Load (1/5/15 min)')}: {load}",
+             tr("运行状态", "Runtime status"),
+             f"  Xray: {service_status('skybyte-xray.service', core_installed)} | {tr('开机自启', 'Start on boot')}: {boot}",
+             f"  {tr('实际核心版本', 'Installed core version')}: {core_version}",
+             f"  {tr('节点', 'Nodes')}: {nodes}",
+             f"  BBR: {bbr}",
+             f"  WARP: {warp_text}",
+             tr("插件/组件（系统检测）", "Plugins/components (system detection)"),
+             "  " + " | ".join(statuses[:2]), "  " + " | ".join(statuses[2:])]
+    return "\n".join(clean(line) if not line.startswith("  ") else "  " + clean(line) for line in lines)
 
 
 def ufw_command(arguments, check=True):
@@ -1279,7 +1511,7 @@ def manager_update(target, tag):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
+    parser.add_argument("command", choices=["selfcheck", "overview", "warp-prepare", "warp-check", "warp-profile", "warp-status", "prepare", "commit", "rollback", "finalize", "backup", "restore",
                                             "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
@@ -1308,7 +1540,31 @@ def main():
     parser.add_argument("--release", default="")
     parser.add_argument("--ssh-ports", nargs="+", default=[])
     parser.add_argument("--purge", action="store_true")
+    parser.add_argument("--language", choices=["zh", "en"], default="zh")
+    parser.add_argument("--proxy-port", type=int, default=40000)
+    parser.add_argument("--domains", nargs="+", default=[])
+    parser.add_argument("--profile", choices=["all", *WARP_PROFILES], default="all")
+    parser.add_argument("--disable", action="store_true")
     options = parser.parse_args()
+    if options.command == "overview":
+        print(startup_overview(Path(options.root), Path(options.binary), options.language))
+        return
+    if options.command == "warp-profile":
+        print(" ".join(WARP_PROFILES[options.profile] if options.profile != "all" else sum(WARP_PROFILES.values(), [])))
+        return
+    if options.command == "warp-check":
+        ip, country = warp_verify(options.proxy_port)
+        print(f"WARP 出口已验证 / WARP egress verified: {ip} ({country})")
+        return
+    if options.command == "warp-status":
+        root = checked_path(options.root)
+        if not root.exists():
+            print("WARP 未启用分流 / WARP routing disabled")
+            return
+        ensure_owned(root)
+        warp = load_state(root).get("warp")
+        print(f"WARP: 127.0.0.1:{warp['port']} | " + ", ".join(warp['domains']) if warp else "WARP 未启用分流 / WARP routing disabled")
+        return
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
         options.address = options.address if options.address is not None else ""
@@ -1417,6 +1673,8 @@ def main():
         if not options.kind:
             raise ValueError("Protocol required")
         print(prepare(root, binary, options))
+    elif options.command == "warp-prepare":
+        print(warp_prepare(root, binary, options.proxy_port, options.domains, options.disable))
     elif options.command == "commit":
         commit(root, Path(options.stage), binary, unit, options.active, options.enabled)
     elif options.command == "rollback":
@@ -2034,12 +2292,324 @@ update_manager(){
  fi
  say '管理脚本已更新，旧脚本保存为 manager.previous.sh。请重新输入 xr。' 'Manager updated; the old script is saved as manager.previous.sh. Run xr again.'
 }
+warp_choose_profile(){
+ local selection profile domains
+ menu '分流平台\n1 Netflix + Disney+ + ChatGPT + Gemini（默认）\n2 仅 Netflix\n3 仅 Disney+\n4 仅 ChatGPT\n5 仅 Gemini\n6 自定义域名后缀\n0 返回' 'Routing profile\n1 Netflix + Disney+ + ChatGPT + Gemini (default)\n2 Netflix only\n3 Disney+ only\n4 ChatGPT only\n5 Gemini only\n6 Custom domain suffixes\n0 Back' >&2
+ selection=$(ask '选择 [1]：' 'Choose [1]: ') || return 1
+ case ${selection:-1} in
+  1) profile=all;; 2) profile=netflix;; 3) profile=disney;; 4) profile=chatgpt;; 5) profile=gemini;;
+  6) domains=$(ask '域名后缀（空格分隔，不含通配符）：' 'Domain suffixes (space-separated, no wildcards): ') || return 1
+     [[ -n $domains ]] || return 1; printf '%s\n' "$domains"; return;;
+  *) return 1;;
+ esac
+ helper warp-profile --profile "$profile"
+}
+warp_apply(){
+ local proxy_port=$1 domains stage
+ local suffixes=()
+ helper node-ports >/dev/null || return 1
+ domains=$(warp_choose_profile) || return 0
+ read -r -a suffixes <<< "$domains"
+ warn '仅匹配的 TCP 域名流量使用 WARP，其余流量直连；匹配的 UDP 拒绝以便应用回退 TCP。WARP 出口通过不代表平台解锁。' 'Only matching TCP domains use WARP; other traffic stays direct. Matching UDP is blocked for TCP fallback. Verified WARP egress does not prove platform access.'
+ confirm '应用 WARP 分流并重启原先运行的节点？' 'Apply WARP routing and restart previously running nodes?' || return 0
+ helper warp-check --proxy-port "$proxy_port" || return 1
+ stage=$(helper warp-prepare --proxy-port "$proxy_port" --domains "${suffixes[@]}") || return 1
+ apply_stage "$stage" || return 1
+ say 'WARP 分流已应用。可用选项 5 对比直连与 WARP 的平台响应。' 'WARP routing applied. Use option 5 to compare direct and WARP platform responses.'
+}
+warp_install_client(){
+ local os_id code proxy_port tmp item listeners attempt ready=0
+ helper node-ports >/dev/null || return 1
+ if command -v warp-cli >/dev/null; then
+  warn '已安装 WARP 客户端，请选择“使用已有本机代理”，保留现有注册和设置。' 'WARP is already installed; use the existing local proxy option to retain registration and settings.'
+  return 1
+ fi
+ if [[ -e ${SKYBYTE_WARP_DATA_DIR:-/var/lib/cloudflare-warp} || -L ${SKYBYTE_WARP_DATA_DIR:-/var/lib/cloudflare-warp} ]]; then
+  error '发现已有 WARP 数据，请先手动核对注册与模式，避免启动已有全局连接。' 'Existing WARP data found; inspect registration and mode before starting a potentially global connection.'
+  return 1
+ fi
+ os_id=$(awk -F= '$1=="ID" {gsub(/"/,"",$2);print $2}' /etc/os-release)
+ code=$(awk -F= '$1=="VERSION_CODENAME" {gsub(/"/,"",$2);print $2}' /etc/os-release)
+ case $os_id:$code in ubuntu:jammy|ubuntu:noble|ubuntu:resolute|debian:bookworm|debian:trixie) ;; *) error '当前系统版本不在官方 WARP 自动安装支持列表中。' 'This OS release is not supported for automatic WARP installation.'; return 1;; esac
+ local repo=/etc/apt/sources.list.d/skybyte-xray-cloudflare-warp.list key=/usr/share/keyrings/skybyte-xray-cloudflare-warp.gpg
+ for item in "$repo" "$key"; do [[ ! -e $item && ! -L $item ]] || { error 'WARP 软件源文件已存在，请先核对。' 'WARP repository files already exist; inspect them first.'; return 1; }; done
+ say '安装官方 Cloudflare WARP，仅启用本机代理模式。条款：https://www.cloudflare.com/application/terms/ 。卸载管理器会保留 WARP 软件和连接。' 'Install official Cloudflare WARP in local proxy mode. Terms: https://www.cloudflare.com/application/terms/ . Removing the manager retains WARP and its connection.'
+ confirm '安装、注册并接受 WARP 条款？' 'Install, register and accept WARP terms?' || return 0
+ proxy_port=$(ask '本机 SOCKS5 端口 [40000]：' 'Local SOCKS5 port [40000]: ') || return 0
+ proxy_port=${proxy_port:-40000}
+ [[ $proxy_port =~ ^[0-9]{4,5}$ ]] && ((10#$proxy_port>=1024 && 10#$proxy_port<=65535)) || return 1
+ proxy_port=$((10#$proxy_port))
+ # Validate node collisions before installing packages or writing repository files.
+ python3 - "$SKYBYTE_XRAY_DIR/state.json" "$proxy_port" <<'PY_WARP_PORT' || return 1
+import json,sys
+assert all(n['port']!=int(sys.argv[2]) for n in json.load(open(sys.argv[1]))['nodes'].values()), 'Proxy conflicts with a node port / 代理与节点端口冲突'
+PY_WARP_PORT
+ apt_refresh && apt-get install -y curl ca-certificates gnupg iproute2 || return 1
+ listeners=$(ss -H -ltn "( sport = :$proxy_port )") || return 1
+ [[ -z $listeners ]] || { error '代理端口已被占用。' 'Proxy port is occupied.'; return 1; }
+ tmp=$(mktemp -d "$SKYBYTE_XRAY_DIR/.warp-install.XXXXXX") || return 1
+ if ! curl -q -fsSL --noproxy '*' --proto '=https' --proto-redir '=https' --max-time 30 https://pkg.cloudflareclient.com/pubkey.gpg -o "$tmp/key" ||
+    ! gpg --batch --yes --dearmor --output "$tmp/keyring" "$tmp/key"; then rm -rf -- "$tmp"; return 1; fi
+ install -m 644 "$tmp/keyring" "$key" || { rm -rf -- "$tmp"; return 1; }
+ printf 'deb [signed-by=%s] https://pkg.cloudflareclient.com/ %s main\n' "$key" "$code" > "$repo"
+ chmod 644 "$repo"; rm -rf -- "$tmp"
+ apt_refresh && apt-get install -y cloudflare-warp || return 1
+ systemctl enable --now warp-svc.service || return 1
+ if warp-cli --accept-tos registration show >/dev/null 2>&1; then
+  error '发现已有 WARP 注册，保留现有设置，请手动配置代理后选择选项 2。' 'Existing WARP registration found; retained. Configure its proxy manually and choose option 2.'; return 1
+ fi
+ warp-cli --accept-tos registration new >/dev/null && warp-cli --accept-tos mode proxy && warp-cli --accept-tos proxy port "$proxy_port" && warp-cli --accept-tos connect || return 1
+ for ((attempt=0; attempt<3; attempt++)); do
+  if helper warp-check --proxy-port "$proxy_port"; then ready=1; break; fi
+  sleep 2
+ done
+ ((ready)) || { error 'WARP 尚未就绪，节点分流未改变。可稍后选择选项 2 重试。' 'WARP is not ready; node routing is unchanged. Retry with option 2 later.'; return 1; }
+ warp_apply "$proxy_port"
+}
+warp_platform_test(){
+ local proxy_port=$1
+ helper warp-check --proxy-port "$proxy_port" || return 1
+ say '将匿名访问 Netflix、Disney+、ChatGPT 和 Gemini，对比直连 IPv4 与 WARP；不登录账号，页面可访问不等于播放或账号可用。' 'Compare anonymous Netflix, Disney+, ChatGPT and Gemini responses over direct IPv4 and WARP. No account login; page access does not verify playback or account access.'
+ python3 - "$SKYBYTE_XRAY_DIR/reports" "$proxy_port" "$LANGUAGE" <<'PY_WARP_MEDIA'
+"""Anonymous service-page probes; evidence is never a playback guarantee."""
+import concurrent.futures
+import datetime
+import html
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import urllib.parse
+
+PROBES={
+ 'Netflix':['https://www.netflix.com/title/81280792','https://www.netflix.com/title/70143836'],
+ 'Disney+':['https://www.disneyplus.com/'],
+ 'ChatGPT':['https://chatgpt.com/'],
+ 'Gemini':['https://gemini.google.com/'],
+ 'YouTube Premium':['https://www.youtube.com/premium'],
+ 'Amazon Prime Video':['https://www.primevideo.com/'],
+ 'TikTok':['https://www.tiktok.com/','https://www.tiktok.com/passport/web/store_region/']}
+LABELS={
+ 'catalog':('片目页面有视频信息；播放未验证','Catalog video metadata; playback unverified'),
+ 'supported':('页面声明地区支持；播放未验证','Page reports supported location; playback unverified'),
+ 'offer':('页面提供订阅入口；订阅资格未验证','Subscription offer shown; eligibility unverified'),
+ 'restricted':('页面明确提示地区限制','Explicit location restriction on page'),
+ 'unknown':('页面可访问；解锁状态未知','Page reachable; unlock status unknown'),
+ 'verification':('访问被拒绝或需验证；解锁未知','Access denied/verification required; unlock unknown'),
+ 'network':('连接/DNS/TLS失败；解锁未知','Connection/DNS/TLS failed; unlock unknown'),
+ 'changed':('响应异常或页面变化；解锁未知','Unexpected response/page changed; unlock unknown')}
+
+# These fields are page-provided hints, not proof of account eligibility or playback.
+REGION_FIELDS={
+ 'Netflix':(('requestCountry','id'),('countryCode',),('country_code',)),
+ 'Disney+':(('countryCode',),('country_code',),('currentTerritory',),('territory',),('regionCode',)),
+ 'YouTube Premium':(('countryCode',),('country_code',),('gl',)),
+ 'Amazon Prime Video':(('currentTerritory',),('territory',),('countryCode',),('country_code',)),
+ 'TikTok':(('store_region',),('countryCode',),('country_code',),('region',))}
+REGION_NAMES={
+ 'AU':('澳大利亚','Australia'),'BR':('巴西','Brazil'),'CA':('加拿大','Canada'),
+ 'DE':('德国','Germany'),'ES':('西班牙','Spain'),'FR':('法国','France'),
+ 'GB':('英国','United Kingdom'),'HK':('香港','Hong Kong'),'ID':('印度尼西亚','Indonesia'),
+ 'IN':('印度','India'),'IT':('意大利','Italy'),'JP':('日本','Japan'),
+ 'KR':('韩国','South Korea'),'MX':('墨西哥','Mexico'),'MY':('马来西亚','Malaysia'),
+ 'NL':('荷兰','Netherlands'),'PH':('菲律宾','Philippines'),'RU':('俄罗斯','Russia'),
+ 'SC':('塞舌尔','Seychelles'),'SG':('新加坡','Singapore'),'TH':('泰国','Thailand'),
+ 'TR':('土耳其','Türkiye'),'TW':('台湾','Taiwan'),'US':('美国','United States'),
+ 'VN':('越南','Vietnam')}
+
+def fetch(url,path='4',port=None,post=False):
+    # Ignore curlrc/proxy environment. No login cookies, authorization or node data.
+    with tempfile.TemporaryDirectory() as tmp:
+        body=Path(tmp)/'body'
+        cmd=['curl','-q','--silent','--show-error','--location','--max-redirs','4',
+             '--proto','=https','--proto-redir','=https','--connect-timeout','4','--max-time','12',
+             '--max-filesize','8388608','--limit-rate','1M','--user-agent','Mozilla/5.0 SKYBYTE-Manager/2.4',
+             '--header','Accept-Language: en-US,en;q=0.9','--output',str(body),
+             '--write-out','%{http_code}\n%{url_effective}']
+        if path=='warp':cmd+=['--noproxy','','--proxy','socks5h://127.0.0.1:'+str(port)]
+        else:cmd+=['--noproxy','*','-'+path]
+        if post:cmd+=['--request','POST','--data','']
+        cmd.append(url)
+        try:r=subprocess.run(cmd,capture_output=True,text=True,timeout=15)
+        except (subprocess.TimeoutExpired,OSError):return {'error':True,'code':0,'body':'','url':url}
+        lines=r.stdout.splitlines()
+        code=int(lines[0]) if lines and lines[0].isdigit() else 0
+        text=body.read_bytes()[:8388608].decode('utf-8','replace') if body.exists() else ''
+        return {'error':r.returncode!=0,'code':code,'body':text,'url':lines[1] if len(lines)>1 else url}
+
+def country_values(text,key):
+    # Handle both literal JSON and JSON strings embedded with escaped quotes.
+    quote=r'(?:\\)?["\']'
+    return list(dict.fromkeys(m[1].upper() for m in re.finditer(quote+re.escape(key)+quote+r'\s*:\s*'+quote+r'([A-Za-z]{2})'+quote,text)))
+
+def country(text,key):
+    return next(iter(country_values(text,key)),'-')
+
+def url_region(response):
+    url=response.get('url','')
+    try:parsed=urllib.parse.urlsplit(url)
+    except ValueError:return '-',''
+    query=urllib.parse.parse_qs(parsed.query)
+    for key in ('country','countryCode','region','gl'):
+        for value in query.get(key,[]):
+            if re.fullmatch('[A-Za-z]{2}',value):return value.upper(),'final URL '+key
+    # Locale paths identify the page's selected territory, not necessarily the egress IP.
+    match=re.search(r'(?:^|/)[a-z]{2}-([a-z]{2})(?:/|$)',parsed.path,re.I)
+    if match:return match[1].upper(),'final URL locale'
+    return '-',''
+
+def region_hint(service,responses):
+    hints=[]
+    for response in responses:
+        if response.get('error') or response.get('code')!=200:continue
+        body=html.unescape(response.get('body',''))
+        found=False
+        for fields in REGION_FIELDS.get(service,()):
+            if len(fields)==2:
+                parent,child=fields
+                quote=r'(?:\\)?["\']'
+                pattern=quote+re.escape(parent)+quote+r'\s*:\s*\{[^{}]{0,512}?'+quote+re.escape(child)+quote+r'\s*:\s*'+quote+r'([A-Za-z]{2})'+quote
+                values=[match[1].upper() for match in re.finditer(pattern,body,re.S)]
+                source=parent+'.'+child
+            else:
+                source=fields[0];values=country_values(body,source)
+            for value in values:
+                hints.append((value,source))
+                found=True
+        if not found:
+            value,source=url_region(response)
+            if value!='-':hints.append((value,source))
+    # Preserve conflicting provider hints instead of silently choosing one.
+    values=list(dict.fromkeys(value for value,_ in hints))
+    sources=list(dict.fromkeys(source for _,source in hints))
+    return '/'.join(values) if values else '-',', '.join(sources)
+
+def region_label(region,language):
+    if region=='-':return '未识别' if language=='zh_CN' else 'not identified'
+    names=[]
+    for code in region.split('/'):
+        name=REGION_NAMES.get(code)
+        names.append((name[0] if language=='zh_CN' else name[1])+' ('+code+')' if name else code)
+    return '/'.join(names)
+
+def location_restricted(service,body):
+    low=body.lower()
+    messages={
+        'Netflix':('not available to watch in your area','this title is not available in your country'),
+        'Disney+':(),
+        'YouTube Premium':('premium is not available in your country',),
+        'Amazon Prime Video':('this video is currently unavailable to watch in your location',),
+        'TikTok':('this content is not available in your region','not available in your region')}
+    return any(phrase in low for phrase in messages.get(service,()))
+
+def json_boolean(text,key):
+    quote=r'(?:\\)?["\']'
+    match=re.search(quote+re.escape(key)+quote+r'\s*:\s*(true|false)',text,re.I)
+    return match[1].lower() if match else None
+
+def status_color(status):
+    if status in ('catalog','offer','supported'):return '\033[1;32m'
+    if status in ('restricted','network','changed'):return '\033[1;31m'
+    return '\033[1;33m'
+
+def ai_location_restricted(service,body):
+    if service not in ('ChatGPT','Gemini'):return False
+    try:
+        data=json.loads(body)
+        error=data.get('error',data) if isinstance(data,dict) else None
+    except (ValueError,TypeError):error=None
+    if isinstance(error,dict):
+        code=str(error.get('code',error.get('type',''))).lower()
+        if code in ('unsupported_country','unsupported_country_region_territory'):return True
+        visible=str(error.get('message','')).lower()
+    else:
+        # Do not mistake dormant JavaScript translations/error enums for a denial.
+        visible=re.sub(r'<(script|style)\b[^>]*>.*?</\1\s*>',' ',body,flags=re.I|re.S)
+        visible=html.unescape(re.sub(r'<[^>]+>',' ',visible)).lower()
+    phrases=('not available in your country','not available in your region','not supported in your country',
+             "gemini isn't available in your country",'gemini isn’t available in your country',
+             'user location is not supported for the api use')
+    return any(phrase in visible for phrase in phrases)
+
+def classify(service,responses):
+    main=responses[0];body=main['body'];low=body.lower()
+    region,region_source=region_hint(service,responses)
+    result={'service':service,'status':'unknown','region':region,'region_source':region_source,'http_code':main['code']}
+    if main['error']:result['status']='network';return result
+    if ai_location_restricted(service,body):
+        result['status']='restricted';return result
+    if main['code'] in (401,403,429,451) or any(x in low for x in ['verify you are human','cf-chl-','robot check','unusual traffic']):
+        result['status']='verification';return result
+    if main['code']!=200:result['status']='changed';return result
+    if location_restricted(service,body):result['status']='restricted';return result
+    if service=='Netflix':
+        if any(not r['error'] and r['code']==200 and re.search(r'<meta\b[^>]*(?:property|name)=["\']og:video',r['body'],re.I) for r in responses):result['status']='catalog'
+    elif service=='Disney+':
+        if json_boolean(body,'inSupportedLocation')=='false' or '/unavailable' in urllib.parse.urlsplit(main['url']).path:
+            result['status']='restricted'
+        elif json_boolean(body,'inSupportedLocation')=='true':result['status']='supported'
+    elif service=='YouTube Premium':
+        if 'purchaseButtonOverride' in body or 'start trial' in low:result['status']='offer'
+    return result
+
+def probe(service,path,port):
+    rows=[fetch(url,path,port,service=='TikTok' and n==1) for n,url in enumerate(PROBES[service])]
+    return classify(service,rows)
+
+def run(paths,report,port=None,language='zh_CN'):
+    en=language=='en_US';results=[]
+    for path in paths:
+        if path=='warp' and not (port and 1024<=port<=65535):raise ValueError('Invalid WARP proxy port')
+        label={'4':'VPS IPv4','6':'VPS IPv6','warp':'WARP proxy (remote DNS)'}[path]
+        print('\n'+label+'\n'+'-'*64,flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+            rows=list(pool.map(lambda s:probe(s,path,port),PROBES))
+        for row in rows:
+            row['path']=path;results.append(row)
+            color=status_color(row['status'])
+            if not __import__('sys').stdout.isatty() or os.environ.get('NO_COLOR'):color=''
+            region=region_label(row['region'],language)
+            source=(' ('+row['region_source']+')') if row.get('region_source') else ''
+            print(color+row['service']+' | '+LABELS[row['status']][int(en)]+' | '+('Page region clue: ' if en else '页面识别地区线索：')+region+source+' | HTTP '+str(row['http_code'])+('\033[0m' if color else ''))
+    report=Path(report);report.mkdir(exist_ok=True,mode=0o700)
+    if report.is_symlink():raise ValueError('Report directory is a symlink')
+    fd,tmp=tempfile.mkstemp(prefix='media-',suffix='.json',dir=report)
+    with os.fdopen(fd,'w') as f:
+        json.dump({'created_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'playback_verified':False,'results':results},f,ensure_ascii=False,indent=2)
+    print(('Report: ' if en else '报告：')+tmp)
+    return results
+
+import sys
+PROBES={key:value for key,value in PROBES.items() if key in ('Netflix','Disney+','ChatGPT','Gemini')}
+run(['4','warp'],sys.argv[1],int(sys.argv[2]),'en_US' if sys.argv[3]=='en' else 'zh_CN')
+PY_WARP_MEDIA
+}
+warp_menu(){
+ local choice proxy_port stage
+ helper warp-status || return 1
+ menu 'WARP 分流与平台检测\n1 安装官方 WARP 本机代理\n2 使用已有本机代理 / 修改分流平台\n3 关闭 WARP 分流，恢复直连\n4 检查 WARP 出口\n5 Netflix / Disney+ / ChatGPT / Gemini 直连与 WARP 对比\n0 返回' 'WARP routing and platform tests\n1 Install official WARP local proxy\n2 Existing local proxy / change routing profile\n3 Disable WARP routing, restore direct\n4 Verify WARP egress\n5 Compare Netflix / Disney+ / ChatGPT / Gemini over direct and WARP\n0 Back'
+ choice=$(ask '> ' '> ') || return 0
+ case $choice in
+  1) warp_install_client;;
+  2|4|5)
+   proxy_port=$(ask '本机 SOCKS5 端口 [40000]：' 'Local SOCKS5 port [40000]: ') || return 0
+   proxy_port=${proxy_port:-40000}
+   case $choice in 2) warp_apply "$proxy_port";; 4) helper warp-check --proxy-port "$proxy_port";; 5) warp_platform_test "$proxy_port";; esac;;
+  3) confirm '关闭本项目 WARP 分流？WARP 软件和其他项目保持原样。' 'Disable WARP routing for this project? WARP and other projects are retained.' || return 0
+     stage=$(helper warp-prepare --disable) || return 1
+     apply_stage "$stage";;
+  0) return 0;; *) return 1;;
+ esac
+}
 main_menu(){
  while :; do
   show_banner
+  show_startup_info
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
-  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n13. 更新管理脚本\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n13. Update manager script\n0. Exit'
+  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n13. 更新管理脚本\n14. WARP 分流 / 平台检测\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n13. Update manager script\n14. WARP routing / platform tests\n0. Exit'
   local choice
   choice=$(ask '请选择：' 'Choose: ') || return 0
   case $choice in
@@ -2050,6 +2620,7 @@ main_menu(){
    9) guide;; 10) choose_language || true;; 11) uninstall || error '卸载未完成。' 'Uninstall did not complete.';;
    12) network_menu || error '网络设置未完成，具体原因见上方提示。' 'Network settings did not complete; see the reason above.';;
    13) if update_manager; then return 0; fi;; 0) return 0;;
+   14) warp_menu || error 'WARP 操作未完成，节点分流已保留或回退；具体原因见上方提示。' 'WARP operation incomplete; node routing retained or restored. See the reason above.';;
    *) warn '选项无效。' 'Invalid option.';;
   esac
  done

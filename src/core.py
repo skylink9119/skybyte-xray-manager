@@ -13,7 +13,9 @@ import io
 import ipaddress
 import json
 import os
+import platform
 import re
+import shlex
 import shutil
 import socket
 import ssl
@@ -28,11 +30,17 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.13"
+VERSION = "0.1.14"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
 KINDS = ("vision", "xhttp-reality", "xhttp-tls")
+WARP_PROFILES = {
+    "netflix": ["netflix.com", "netflix.net", "nflxext.com", "nflximg.com", "nflximg.net", "nflxso.net", "nflxvideo.net"],
+    "disney": ["disneyplus.com", "disney-plus.net", "dssott.com", "bamgrid.com"],
+    "chatgpt": ["openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com"],
+    "gemini": ["gemini.google.com", "aistudio.google.com", "generativelanguage.googleapis.com"],
+}
 MODES = ("auto", "packet-up", "stream-up", "stream-one")
 MAX_ARCHIVE = 16 * 1024 * 1024
 
@@ -154,8 +162,15 @@ def new_keys(binary):
 
 
 def validate_state(state):
-    if not isinstance(state, dict) or set(state) != {"schema", "nodes"} or state["schema"] != 1:
+    if not isinstance(state, dict) or set(state) not in ({"schema", "nodes"}, {"schema", "nodes", "warp"}) or state["schema"] != 1:
         raise ValueError("Unknown state format / 非托管状态格式")
+    if "warp" in state:
+        warp = state["warp"]
+        if not isinstance(warp, dict) or set(warp) != {"port", "domains"} or type(warp["port"]) is not int or not 1024 <= warp["port"] <= 65535:
+            raise ValueError("Invalid WARP proxy / WARP 代理配置无效")
+        domains = warp["domains"]
+        if not isinstance(domains, list) or not 1 <= len(domains) <= 128 or any(not isinstance(d, str) or domain(d) != d or "." not in d for d in domains) or len(set(domains)) != len(domains):
+            raise ValueError("Invalid WARP domain suffixes / WARP 域名后缀无效")
     if not isinstance(state["nodes"], dict) or not set(state["nodes"]) <= set(KINDS):
         raise ValueError("Invalid protocol state")
     ports = set()
@@ -173,6 +188,8 @@ def validate_state(state):
         if p in ports:
             raise ValueError("Duplicate TCP port / TCP 端口冲突")
         ports.add(p)
+        if "warp" in state and p == state["warp"]["port"]:
+            raise ValueError("WARP proxy conflicts with a node port / WARP 代理与节点端口冲突")
         address(node["address"])
         domain(node["sni"])
         if node["listen"] not in ("0.0.0.0", "::", "127.0.0.1", "::1"):
@@ -218,10 +235,61 @@ def server_config(state, root):
                 "serverNames": [node["sni"]], "privateKey": node["private"], "shortIds": [node["short_id"]]})
         inbounds.append({"tag": kind, "listen": node["listen"], "port": node["port"], "protocol": "vless",
                          "settings": {"clients": [user], "decryption": "none"}, "streamSettings": stream})
-    return {"log": {"loglevel": "warning"}, "inbounds": inbounds,
+    result = {"log": {"loglevel": "warning"}, "inbounds": inbounds,
             "outbounds": [{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}],
             "routing": {"domainStrategy": "IPOnDemand", "rules": [{"type": "field", "ip": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
                 "192.168.0.0/16", "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"], "outboundTag": "block"}]}}
+    if "warp" in state:
+        warp = state["warp"]
+        result["outbounds"].append({"protocol": "socks", "tag": "warp", "settings": {
+            "servers": [{"address": "127.0.0.1", "port": warp["port"]}]}})
+        domains = ["domain:" + suffix for suffix in warp["domains"]]
+        result["routing"]["rules"] += [
+            {"type": "field", "network": "udp", "domain": domains, "outboundTag": "block"},
+            {"type": "field", "network": "tcp", "domain": domains, "outboundTag": "warp"}]
+        for inbound in inbounds:
+            inbound["sniffing"] = {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": True}
+    return result
+
+
+def warp_prepare(root, binary, number, domains, disable=False):
+    ensure_owned(root)
+    state = copy.deepcopy(load_state(root))
+    if not state["nodes"] and not disable:
+        raise ValueError("Install a node before configuring WARP / 请先安装节点，再设置 WARP 分流")
+    if disable:
+        state.pop("warp", None)
+    else:
+        state["warp"] = {"port": number, "domains": list(dict.fromkeys(domains))}
+    validate_state(state)
+    stage = make_stage(root, state)
+    try:
+        finish_stage(stage, state, binary)
+        return stage
+    except BaseException:
+        shutil.rmtree(stage)
+        raise
+
+
+def warp_verify(number):
+    number = port(number)
+    if number < 1024:
+        raise ValueError("WARP proxy port must be 1024–65535 / WARP 代理端口须为 1024–65535")
+    listeners = system_command(["ss", "-H", "-ltn", f"( sport = :{number} )"]).stdout.splitlines()
+    if not listeners or any(len(line.split()) < 4 or line.split()[3] not in (
+            f"127.0.0.1:{number}", f"[::1]:{number}", f"::1:{number}") for line in listeners):
+        raise ValueError("WARP proxy must listen only on loopback / WARP 代理须已启动且仅监听回环地址")
+    result = system_command(["curl", "-q", "-fsSL", "--noproxy", "", "--proxy", f"socks5h://127.0.0.1:{number}",
+        "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "4", "--max-time", "10", "--max-filesize", "65536",
+        "https://www.cloudflare.com/cdn-cgi/trace"])
+    trace = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    try:
+        valid = trace.get("warp") in ("on", "plus") and ipaddress.ip_address(trace.get("ip", "")).is_global and re.fullmatch("[A-Z]{2}", trace.get("loc", ""))
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("WARP egress could not be verified; routing unchanged / WARP 出口验证未通过，分流保持原样")
+    return trace["ip"], trace["loc"]
 
 
 def client_config(kind, node, socks_port=10808):
@@ -643,6 +711,165 @@ def error_message(error):
 def system_command(arguments, check=True):
     return subprocess.run(arguments, check=check, capture_output=True, text=True,
                           timeout=30, env={**os.environ, "LC_ALL": "C"})
+
+
+def overview_read(path):
+    try:
+        return Path(path).read_text(errors="replace")
+    except OSError:
+        return ""
+
+
+def overview_command(arguments):
+    """Best-effort local probes must never prevent opening the menu."""
+    try:
+        result = subprocess.run(arguments, capture_output=True, text=True, timeout=2,
+                                env={**os.environ, "LC_ALL": "C"})
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def startup_overview(root, binary, language="zh"):
+    def tr(zh, en):
+        return en if language == "en" else zh
+
+    unknown = tr("未知", "Unknown")
+
+    def clean(value):
+        # Local host/package metadata is untrusted terminal text, too.
+        value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(value))
+        return " ".join("".join(c if c.isprintable() else " " for c in value).split())[:240] or unknown
+
+    def gib(value):
+        return f"{value / (1024 ** 3):.2f} GiB"
+
+    os_name = unknown
+    for line in overview_read("/etc/os-release").splitlines():
+        if line.startswith("PRETTY_NAME="):
+            try:
+                os_name = " ".join(shlex.split(line.split("=", 1)[1])) or unknown
+            except ValueError:
+                pass
+            break
+    machine = platform.uname()
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine.machine, machine.machine)
+    cpu = next((line.split(":", 1)[1].strip() for line in overview_read("/proc/cpuinfo").splitlines()
+                if line.split(":", 1)[0].strip() in ("model name", "Hardware", "Processor") and ":" in line), unknown)
+    memory = {}
+    for line in overview_read("/proc/meminfo").splitlines():
+        match = re.fullmatch(r"(\w+):\s+(\d+) kB", line)
+        if match:
+            memory[match[1]] = int(match[2]) * 1024
+    total = memory.get("MemTotal", 0)
+    available = memory.get("MemAvailable", sum(memory.get(key, 0) for key in ("MemFree", "Buffers", "Cached")))
+    used = max(0, total - min(total, available))
+    memory_text = f"{gib(used)} / {gib(total)}" if total else unknown
+    swap = memory.get("SwapTotal", 0)
+    swap_text = f"{gib(max(0, swap - memory.get('SwapFree', 0)))} / {gib(swap)}" if swap else tr("未配置", "Not configured")
+    try:
+        disk = shutil.disk_usage("/")
+        disk_text = f"{gib(disk.used)} / {gib(disk.total)} ({disk.used / disk.total:.0%})" if disk.total else unknown
+    except OSError:
+        disk_text = unknown
+    try:
+        minutes = int(float(overview_read("/proc/uptime").split()[0])) // 60
+        uptime = tr(f"{minutes // 1440} 天 {minutes // 60 % 24} 小时 {minutes % 60} 分", f"{minutes // 1440}d {minutes // 60 % 24}h {minutes % 60}m")
+    except (ValueError, IndexError):
+        uptime = unknown
+    load = " / ".join(overview_read("/proc/loadavg").split()[:3]) or unknown
+
+    components = [("UFW", "ufw", "ufw.service"), ("firewalld", "firewall-cmd", "firewalld.service"),
+                  (tr("WARP 客户端", "WARP client"), "warp-cli", "warp-svc.service"),
+                  ("Fail2ban", "fail2ban-client", "fail2ban.service"), (tr("二维码工具", "QR utility"), "qrencode", None)]
+    present = {tool: bool(shutil.which(tool)) for _, tool, _ in components}
+    units = ["skybyte-xray.service", *[unit for _, tool, unit in components if unit and present[tool]]]
+    service_output = overview_command(["systemctl", "show", "--no-pager", "--property=Id,LoadState,ActiveState,UnitFileState", *units])
+    services = {}
+    for block in service_output.split("\n\n"):
+        properties = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+        if properties.get("Id") in units:
+            services[properties["Id"]] = properties
+
+    def service_status(unit, installed):
+        properties = services.get(unit, {})
+        active = properties.get("ActiveState")
+        if active in ("active", "reloading"):
+            return tr("运行中", "Running")
+        if active == "failed":
+            return tr("运行失败", "Failed")
+        if active in ("activating", "deactivating"):
+            return tr("启动中" if active == "activating" else "停止中", "Starting" if active == "activating" else "Stopping")
+        if properties.get("LoadState") == "not-found":
+            return tr("已安装，服务未注册", "Installed, service not registered") if installed else tr("未安装", "Not installed")
+        if active == "inactive":
+            return tr("已安装，未运行", "Installed, inactive")
+        return tr("已安装，状态未知", "Installed, status unknown") if installed else unknown
+
+    core_installed = False
+    core_version = tr("未安装", "Not installed")
+    try:
+        checked_path(binary)
+        marker = checked_path(binary.parent / ".owner")
+        core_installed = binary.is_file() and os.access(binary, os.X_OK) and marker.read_text() == OWNER
+    except (OSError, ValueError):
+        pass
+    if core_installed:
+        version_output = overview_command([str(binary), "version"])
+        match = re.search(r"^Xray\s+(\S+)", version_output)
+        core_version = match[1] if match else unknown
+    main_service = services.get("skybyte-xray.service", {})
+    enabled = main_service.get("UnitFileState", "")
+    boot = tr("已启用", "Enabled") if enabled in ("enabled", "enabled-runtime") else (
+        tr("未启用", "Disabled") if enabled in ("disabled", "masked", "masked-runtime", "static", "indirect") else unknown)
+
+    nodes = tr("尚未安装节点", "No nodes installed")
+    warp_text = tr("未启用分流", "Routing disabled")
+    try:
+        checked_path(root)
+        if root.exists():
+            ensure_owned(root)
+            state = load_state(root)
+            if "warp" in state:
+                warp_text = tr("已配置域名分流", "Domain routing configured") + f" | 127.0.0.1:{state['warp']['port']} | {len(state['warp']['domains'])} " + tr("个后缀（连通性见菜单 14）", "suffixes (test connectivity in menu 14)")
+            names = {"vision": "Reality + Vision", "xhttp-reality": "XHTTP + Reality", "xhttp-tls": "XHTTP + TLS/CDN"}
+            nodes = " | ".join(f"{names[kind]}: TCP {node['port']}" for kind, node in state["nodes"].items()) or nodes
+    except (OSError, ValueError, KeyError, TypeError):
+        nodes = tr("配置读取失败，请检查服务与日志", "Configuration unreadable; check service and logs")
+
+    algorithm = overview_read("/proc/sys/net/ipv4/tcp_congestion_control").strip()
+    qdisc = overview_read("/proc/sys/net/core/default_qdisc").strip()
+    bbr = tr("已开启 BBR 加速", "BBR acceleration enabled") if algorithm == "bbr" else (
+        tr("未开启 BBR 加速", "BBR acceleration not enabled") if algorithm else unknown)
+    if algorithm:
+        bbr += f" ({algorithm}" + (f" / {qdisc}" if qdisc else "") + ")"
+    statuses = []
+    for label, tool, unit in components:
+        if not present[tool]:
+            status = tr("未安装", "Not installed")
+        elif tool == "ufw":
+            ufw = overview_command(["ufw", "status"])
+            status = tr("已启用", "Enabled") if ufw.startswith("Status: active") else (
+                tr("已安装，未启用", "Installed, disabled") if ufw.startswith("Status: inactive") else tr("已安装，状态未知", "Installed, status unknown"))
+        else:
+            status = service_status(unit, True) if unit else tr("已安装", "Installed")
+        statuses.append(f"{label}: {status}")
+    lines = [tr("服务器配置", "Server configuration"),
+             f"  {tr('系统', 'OS')}: {os_name} | {tr('架构', 'Architecture')}: {arch}",
+             f"  {tr('内核', 'Kernel')}: {machine.release}",
+             f"  CPU: {cpu} ({os.cpu_count() or unknown} vCPU)",
+             f"  {tr('内存', 'Memory')}: {memory_text} | Swap: {swap_text}",
+             f"  {tr('根分区', 'Root disk')}: {disk_text}",
+             f"  {tr('运行时间', 'Uptime')}: {uptime} | {tr('负载 (1/5/15 分)', 'Load (1/5/15 min)')}: {load}",
+             tr("运行状态", "Runtime status"),
+             f"  Xray: {service_status('skybyte-xray.service', core_installed)} | {tr('开机自启', 'Start on boot')}: {boot}",
+             f"  {tr('实际核心版本', 'Installed core version')}: {core_version}",
+             f"  {tr('节点', 'Nodes')}: {nodes}",
+             f"  BBR: {bbr}",
+             f"  WARP: {warp_text}",
+             tr("插件/组件（系统检测）", "Plugins/components (system detection)"),
+             "  " + " | ".join(statuses[:2]), "  " + " | ".join(statuses[2:])]
+    return "\n".join(clean(line) if not line.startswith("  ") else "  " + clean(line) for line in lines)
 
 
 def ufw_command(arguments, check=True):
@@ -1229,7 +1456,7 @@ def manager_update(target, tag):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["selfcheck", "prepare", "commit", "rollback", "finalize", "backup", "restore",
+    parser.add_argument("command", choices=["selfcheck", "overview", "warp-prepare", "warp-check", "warp-profile", "warp-status", "prepare", "commit", "rollback", "finalize", "backup", "restore",
                                             "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
@@ -1258,7 +1485,31 @@ def main():
     parser.add_argument("--release", default="")
     parser.add_argument("--ssh-ports", nargs="+", default=[])
     parser.add_argument("--purge", action="store_true")
+    parser.add_argument("--language", choices=["zh", "en"], default="zh")
+    parser.add_argument("--proxy-port", type=int, default=40000)
+    parser.add_argument("--domains", nargs="+", default=[])
+    parser.add_argument("--profile", choices=["all", *WARP_PROFILES], default="all")
+    parser.add_argument("--disable", action="store_true")
     options = parser.parse_args()
+    if options.command == "overview":
+        print(startup_overview(Path(options.root), Path(options.binary), options.language))
+        return
+    if options.command == "warp-profile":
+        print(" ".join(WARP_PROFILES[options.profile] if options.profile != "all" else sum(WARP_PROFILES.values(), [])))
+        return
+    if options.command == "warp-check":
+        ip, country = warp_verify(options.proxy_port)
+        print(f"WARP 出口已验证 / WARP egress verified: {ip} ({country})")
+        return
+    if options.command == "warp-status":
+        root = checked_path(options.root)
+        if not root.exists():
+            print("WARP 未启用分流 / WARP routing disabled")
+            return
+        ensure_owned(root)
+        warp = load_state(root).get("warp")
+        print(f"WARP: 127.0.0.1:{warp['port']} | " + ", ".join(warp['domains']) if warp else "WARP 未启用分流 / WARP routing disabled")
+        return
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
         options.address = options.address if options.address is not None else ""
@@ -1367,6 +1618,8 @@ def main():
         if not options.kind:
             raise ValueError("Protocol required")
         print(prepare(root, binary, options))
+    elif options.command == "warp-prepare":
+        print(warp_prepare(root, binary, options.proxy_port, options.domains, options.disable))
     elif options.command == "commit":
         commit(root, Path(options.stage), binary, unit, options.active, options.enabled)
     elif options.command == "rollback":

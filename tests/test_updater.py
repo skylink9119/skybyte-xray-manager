@@ -194,6 +194,7 @@ LANGUAGE="$2"
         for language in ['zh', 'en']:
             result, calls = self.shell('13\nY\n', language=language, menu=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls.pop(0), 'overview --language '+language)
             self.assertEqual(len(calls), 2)
             self.assertIn('manager-update --release v0.1.4 --file', calls[1])
 
@@ -207,4 +208,6 @@ LANGUAGE="$2"
         result, calls = self.shell('13\nY\n0\n', fail=True, menu=True, language='en')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Manager update did not complete', result.stderr + result.stdout)
+        self.assertEqual(calls.count('overview --language en'), 2)
+        calls = [call for call in calls if not call.startswith('overview ')]
         self.assertEqual(len(calls), 2)
