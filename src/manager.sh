@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.15
+VERSION=0.1.16
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -48,7 +48,7 @@ LOGO
 }
 show_startup_info(){
  separator
- helper overview --language "$LANGUAGE" || warn '状态概览暂不可用，可通过菜单 4 或 12 查看详情。' 'Overview unavailable; use menu 4 or 12 for details.'
+ helper overview --language "$LANGUAGE" || warn '状态概览暂不可用，可通过菜单 d 或 l 查看详情。' 'Overview unavailable; use menu d or l for details.'
  separator
 }
 
@@ -268,7 +268,7 @@ install_node(){
   selected=$(ask "模式 [$mode]（auto / packet-up / stream-up / stream-one）：" "Mode [$mode] (auto / packet-up / stream-up / stream-one): ") || return 1
   mode=${selected:-$mode}
  fi
- warn '请放行实际 TCP 端口，可用菜单 12 管理系统防火墙；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port using menu 12 for the host firewall; validation does not prove public/CDN connectivity.'
+ warn '请放行实际 TCP 端口，可用菜单 l 管理系统防火墙；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port using menu l for the host firewall; validation does not prove public/CDN connectivity.'
  if ! confirm '安装并启动所选节点？' 'Install and start the selected node?'; then
   say '已取消节点安装，未下载核心或更改节点配置。' 'Node installation cancelled; no core download or node configuration changes.'
   return 0
@@ -313,8 +313,14 @@ choose_kind(){
 edit_nodes(){
  local choice kind value stage cert private_key host node_port path
  local flags=()
+ # --menu renders only; a numeric argument executes one selected operation.
+ if [[ $# == 0 || $1 == --menu ]]; then
  menu '1 重命名  2 删除协议  3 更新 TLS 证书  4 修改地址/端口/路径  0 返回' '1 Rename  2 Remove protocol  3 Refresh TLS certificate  4 Edit address/port/path  0 Back'
+ [[ ${1:-} != --menu ]] || return 0
  choice=$(ask '> ' '> ') || return 1
+ else
+  choice=$1
+ fi
  [[ $choice != 0 ]] || return 0
  kind=$(choose_kind) || return 1
  case $choice in
@@ -341,14 +347,20 @@ edit_nodes(){
  esac
  apply_stage "$stage" || return 1
  if [[ $choice == 4 ]]; then
-  say '节点已更新；请使用菜单 2 的新链接或导出文件更新客户端。' 'Node updated; update clients with the new links or exports from menu 2.'
+  say '节点已更新；请使用菜单 b 的新链接或导出文件更新客户端。' 'Node updated; update clients with the new links or exports from menu b.'
  fi
 }
 service_menu(){
  helper guard || return 1
+ # --menu renders only; a numeric argument executes one selected operation.
+ if [[ $# == 0 || $1 == --menu ]]; then
  menu '1 状态  2 启动  3 停止  4 重启  5 配置检查  6 日志  0 返回' '1 Status  2 Start  3 Stop  4 Restart  5 Validate  6 Logs  0 Back'
  local choice
+ [[ ${1:-} != --menu ]] || return 0
  choice=$(ask '> ' '> ') || return 1
+ else
+  choice=$1
+ fi
  case $choice in
   1) systemctl status skybyte-xray.service --no-pager || true;;
   2) systemctl start skybyte-xray.service;; 3) systemctl stop skybyte-xray.service;; 4) systemctl restart skybyte-xray.service;;
@@ -437,7 +449,7 @@ for p in paths:
  if p.exists(): p.unlink()
 PY
  systemctl daemon-reload || return 1
- warn '已卸载。备份、未知文件、系统依赖、防火墙规则和 BBR 设置保留；如需恢复 BBR，请在卸载前使用菜单 12 → 8。' 'Removed. Backups, unknown files, dependencies, firewall rules and BBR settings retained; restore BBR with menu 12 → 8 before uninstalling if needed.'
+ warn '已卸载。备份、未知文件、系统依赖、防火墙规则和 BBR 设置保留；如需恢复 BBR，请在卸载前使用菜单 l → 8。' 'Removed. Backups, unknown files, dependencies, firewall rules and BBR settings retained; restore BBR with menu l → 8 before uninstalling if needed.'
  exit 0
 }
 guide(){
@@ -574,8 +586,14 @@ remove_firewall(){
 }
 network_menu(){
  local choice value
+ # --menu renders only; a numeric argument executes one selected operation.
+ if [[ $# == 0 || $1 == --menu ]]; then
  menu '防火墙\n1 查看防火墙状态\n2 安装并启用 UFW\n3 放行全部节点 TCP 端口\n4 放行指定 TCP 端口\n5 停用/卸载 UFW\n\nBBR\n6 查看 BBR 状态\n7 启用 BBR + fq\n8 恢复启用前参数\n\n0 返回' 'Firewall\n1 Show firewall status\n2 Install and enable UFW\n3 Allow all node TCP ports\n4 Allow a TCP port\n5 Disable/remove UFW\n\nBBR\n6 Show BBR status\n7 Enable BBR + fq\n8 Restore previous settings\n\n0 Back'
+ [[ ${1:-} != --menu ]] || return 0
  choice=$(ask '> ' '> ') || return 1
+ else
+  choice=$1
+ fi
  case $choice in
   1) helper firewall-status;;
   2) install_firewall;;
@@ -700,6 +718,8 @@ PY_WARP_MEDIA
 }
 warp_menu(){
  local choice proxy_port stage
+ # --menu renders only; a numeric argument executes one selected operation.
+ if [[ $# == 0 || $1 == --menu ]]; then
  printf '\n%s%s%s\n' "$CYAN" "$(if [[ $LANGUAGE == en ]]; then printf '========== WARP Manager =========='; else printf '========== WARP 管理 =========='; fi)" "$RESET"
  helper warp-status --language "$LANGUAGE" || return 1
  menu '
@@ -729,7 +749,11 @@ warp_menu(){
 
 0. Back
 --------------------------------------'
+ [[ ${1:-} != --menu ]] || return 0
  choice=$(ask '> ' '> ') || return 0
+ else
+  choice=$1
+ fi
  case $choice in
   1) warp_install_client;;
   2|4|5)
@@ -742,24 +766,36 @@ warp_menu(){
   0) return 0;; *) return 1;;
  esac
 }
+run_submenu(){
+ local handler=$1 choice
+ while :; do
+  "$handler" --menu || { error '无法打开此菜单，请检查上方提示。' 'Cannot open this menu; inspect the output above.';return 0; }
+  say '操作后留在此菜单；0 返回上一层。' 'Stay in this menu after each operation; 0 returns one level.'
+  choice=$(ask '> ' '> ') || return 0
+  [[ $choice != 0 ]] || return 0
+  if ! ( "$handler" "$choice" ); then
+   error '操作未完成或已取消；可在当前菜单继续选择。' 'Operation incomplete or cancelled; choose again in this menu.'
+  fi
+ done
+}
 main_menu(){
  while :; do
   show_banner
   show_startup_info
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
-  menu '1. 安装 / 添加节点\n2. 查看节点与客户端配置\n3. 节点二维码\n4. 服务与日志\n5. 编辑节点 / 删除 / TLS 证书\n6. 更新 Xray 核心\n7. 备份配置\n8. 恢复配置\n9. 使用说明\n10. 切换语言\n11. 卸载\n12. 防火墙 / BBR\n13. 更新管理脚本\n14. WARP 分流 / 平台检测\n0. 退出' '1. Install / add nodes\n2. Nodes and client configs\n3. Node QR codes\n4. Service and logs\n5. Edit nodes / remove / TLS certificate\n6. Update Xray-core\n7. Back up configuration\n8. Restore configuration\n9. Guide\n10. Language\n11. Uninstall\n12. Firewall / BBR\n13. Update manager script\n14. WARP routing / platform tests\n0. Exit'
+  menu 'a. 安装 / 添加节点\nb. 查看节点与客户端配置\nc. 节点二维码\nd. 服务与日志\ne. 编辑节点 / 删除 / TLS 证书\nf. 更新 Xray 核心\ng. 备份配置\nh. 恢复配置\ni. 使用说明\nj. 切换语言\nk. 卸载\nl. 防火墙 / BBR\nm. 更新管理脚本\nn. WARP 分流 / 平台检测\nq. 退出' 'a. Install / add nodes\nb. Nodes and client configs\nc. Node QR codes\nd. Service and logs\ne. Edit nodes / remove / TLS certificate\nf. Update Xray-core\ng. Back up configuration\nh. Restore configuration\ni. Guide\nj. Language\nk. Uninstall\nl. Firewall / BBR\nm. Update manager script\nn. WARP routing / platform tests\nq. Exit'
   local choice
-  choice=$(ask '请选择：' 'Choose: ') || return 0
+  choice=$(ask '请选择（字母）：' 'Choose (letter): ') || return 0
   case $choice in
-   1) install_node || error '操作未完成或已取消；失败原因见上方提示。' 'Operation did not complete or was cancelled; see the reason above.';;
-   2) show_nodes;; 3) qr_nodes || true;; 4) service_menu || true;; 5) edit_nodes || true;;
-   6) update_core || error '核心更新失败，已保留或回退原核心。' 'Core update failed; previous core retained or restored.';;
-   7) make_backup || true;; 8) restore_backup || error '恢复失败，原配置已保留或回退。' 'Restore failed; previous configuration retained or restored.';;
-   9) guide;; 10) choose_language || true;; 11) uninstall || error '卸载未完成。' 'Uninstall did not complete.';;
-   12) network_menu || error '网络设置未完成，具体原因见上方提示。' 'Network settings did not complete; see the reason above.';;
-   13) if update_manager; then return 0; fi;; 0) return 0;;
-   14) warp_menu || error 'WARP 操作未完成，节点分流已保留或回退；具体原因见上方提示。' 'WARP operation incomplete; node routing retained or restored. See the reason above.';;
+   a|A|1) install_node || error '操作未完成或已取消；失败原因见上方提示。' 'Operation did not complete or was cancelled; see the reason above.';;
+   b|B|2) show_nodes;; c|C|3) qr_nodes || true;; d|D|4) run_submenu service_menu;; e|E|5) run_submenu edit_nodes;;
+   f|F|6) update_core || error '核心更新失败，已保留或回退原核心。' 'Core update failed; previous core retained or restored.';;
+   g|G|7) make_backup || true;; h|H|8) restore_backup || error '恢复失败，原配置已保留或回退。' 'Restore failed; previous configuration retained or restored.';;
+   i|I|9) guide;; j|J|10) choose_language || true;; k|K|11) uninstall || error '卸载未完成。' 'Uninstall did not complete.';;
+   l|L|12) run_submenu network_menu;;
+   m|M|13) if update_manager; then return 0; fi;; q|Q|0) return 0;;
+   n|N|14) run_submenu warp_menu;;
    *) warn '选项无效。' 'Invalid option.';;
   esac
  done

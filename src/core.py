@@ -30,7 +30,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.15"
+VERSION = "0.1.16"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -844,7 +844,7 @@ def startup_overview(root, binary, language="zh"):
             ensure_owned(root)
             state = load_state(root)
             if "warp" in state:
-                warp_text = tr("已配置域名分流", "Domain routing configured") + f" | 127.0.0.1:{state['warp']['port']} | {len(state['warp']['domains'])} " + tr("个后缀（连通性见菜单 14）", "suffixes (test connectivity in menu 14)")
+                warp_text = tr("已配置域名分流", "Domain routing configured") + f" | 127.0.0.1:{state['warp']['port']} | {len(state['warp']['domains'])} " + tr("个后缀（连通性见菜单 n）", "suffixes (test connectivity in menu n)")
             names = {"vision": "Reality + Vision", "xhttp-reality": "XHTTP + Reality", "xhttp-tls": "XHTTP + TLS/CDN"}
             nodes = " | ".join(f"{names[kind]}: TCP {node['port']}" for kind, node in state["nodes"].items()) or nodes
     except (OSError, ValueError, KeyError, TypeError):

@@ -61,6 +61,19 @@ p.write_text(json.dumps(x));sys.exit(result)
             env=self.env,capture_output=True,text=True)
 
 class ServiceTests(ServiceFixture):
+    def test_main_edit_menu_keeps_credentials_across_consecutive_edits(self):
+        old=self.installed();self.set_controller(active=True)
+        new_port=free_port()
+        inputs=f'e\n4\n1\nnew.example.com\n{new_port}\n4\n1\n\n\n0\nq\n'
+        result=self.shell('show_startup_info(){ :; };main_menu <<< "$2"',inputs)
+        self.assertEqual(result.returncode,0,result.stderr)
+        current=core.load_state(self.root)['nodes']['vision']
+        self.assertEqual(current['uuid'],old['nodes']['vision']['uuid'])
+        self.assertEqual(current['private'],old['nodes']['vision']['private'])
+        self.assertEqual(current['address'],'new.example.com')
+        self.assertEqual(current['port'],new_port)
+        self.assertEqual(self.state()['history'].count('restart'),1)
+
     def test_first_install_success_starts_and_enables_owned_service(self):
         state={'schema':1,'nodes':{'vision':example_node()}}
         result=self.shell('apply_stage "$2" yes',self.stage(state))

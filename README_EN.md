@@ -28,7 +28,7 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.15**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.16**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Startup overview
 
@@ -36,7 +36,7 @@ The main menu shows OS, architecture, kernel, CPU, memory/swap, root-disk use, u
 
 ## WARP routing and platform tests
 
-The WARP menu groups proxy setup, routing and connection tests, with one short option per line and a compact local status. Open **14** to install the official local-proxy client, reuse a loopback SOCKS5 gateway or restore direct routing for this project. Installation uses the [official signed Cloudflare repository](https://pkg.cloudflareclient.com/), asks for terms confirmation and configures local-proxy mode (default `127.0.0.1:40000`). Existing clients or residual registration data stop automatic installation. An existing proxy can be shared with sing-box while each project manages its own routes.
+The WARP menu groups proxy setup, routing and connection tests, with one short option per line and a compact local status. Open **n** to install the official local-proxy client, reuse a loopback SOCKS5 gateway or restore direct routing for this project. Installation uses the [official signed Cloudflare repository](https://pkg.cloudflareclient.com/), asks for terms confirmation and configures local-proxy mode (default `127.0.0.1:40000`). Existing clients or residual registration data stop automatic installation. An existing proxy can be shared with sing-box while each project manages its own routes.
 
 Choose Netflix, Disney+, ChatGPT, Gemini, all four, or custom domain suffixes. Before applying, verify loopback-only listening and a real HTTPS Cloudflare trace request through proxy-side DNS, including `warp=on/plus`, a global egress IP and country. Only matching TCP uses WARP; unmatched traffic stays direct and matching UDP is blocked for application TCP fallback. Domain sniffing cannot guarantee matches for IP-only traffic, ECH or unlisted domains. System default routes are untouched; selected WARP traffic does not silently fall back to direct on failure. Platform access or a specific country is not guaranteed.
 
@@ -90,26 +90,30 @@ The client connection address is required: enter this VPS's public IP or a domai
 
 ## Menu
 
-1. Install/add a node
-2. View nodes and client exports
-3. Local QR codes
-4. Service status, start/stop/restart, validation and logs
-5. Rename, remove, refresh TLS certificates or edit address/port/path
-6. Update verified official stable Xray-core
-7/8. Back up/restore configuration
-9/10/11. Guide, language and uninstall
-12. Firewall / BBR
-13. Update manager script
+The main menu uses case-insensitive letters `a–n`; submenus use numbers. `0` returns one level and `q` exits from the main menu. Completed, cancelled and failed operations keep the current submenu open for consecutive firewall, service, node-edit and WARP operations. Previous main-menu numbers remain compatibility aliases.
 
-Permit actual TCP ports in the system firewall and provider security group. Menu 12 manages host TCP allows; provider security groups remain manual.
+a. Install/add a node
+- **b**: View nodes and client exports
+- **c**: Local QR codes
+- **d**: Service status, start/stop/restart, validation and logs
+- **e**: Rename, remove, refresh TLS certificates or edit address/port/path
+- **f**: Update verified official stable Xray-core
+- **g/h**: Back up/restore configuration
+- **i/j/k**: Guide, language and uninstall
+- **l**: Firewall / BBR
+- **m**: Update manager script
+- **n**: WARP routing and platform tests
+- **q**: Exit
 
-Use **5 → 4** to edit an installed node's client address, TCP listen port and XHTTP path. Enter keeps each value; leaving every field blank returns without restarting. Vision has no path prompt. UUIDs, Reality keys, Short IDs, TLS SNI, certificates and other nodes are retained. Input, managed port conflicts and changed port availability are checked before staging. Server configuration, links, Base64 and Xray client JSON are regenerated together. Active services restart with rollback on failure; stopped services stay stopped. Re-import clients from menu 2 and allow the new TCP port; CDN users must also check provider port support.
+Permit actual TCP ports in the system firewall and provider security group. Menu l manages host TCP allows; provider security groups remain manual.
+
+Use **e → 4** to edit an installed node's client address, TCP listen port and XHTTP path. Enter keeps each value; leaving every field blank returns without restarting. Vision has no path prompt. UUIDs, Reality keys, Short IDs, TLS SNI, certificates and other nodes are retained. Input, managed port conflicts and changed port availability are checked before staging. Server configuration, links, Base64 and Xray client JSON are regenerated together. Active services restart with rollback on failure; stopped services stay stopped. Re-import clients from menu b and allow the new TCP port; CDN users must also check provider port support.
 
 The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality: Microsoft (`www.microsoft.com`, default), Apple (`www.apple.com`), Amazon (`www.amazon.com`), Cloudflare (`www.cloudflare.com`) and Google (`dl.google.com`). The target defaults to the selected domain on `:443` and remains editable. Choose Custom or enter a domain directly; 0 returns. Each selection still undergoes the VPS TLS 1.3, HTTP/2 and certificate check before core download or node configuration changes. Reachability depends on the VPS route.
 
 ## Manager self-update
 
-Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.15 installer once to obtain this menu.
+Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.16 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 
@@ -117,7 +121,7 @@ After success the old menu exits; run `xr` again. The backup retains one previou
 
 ## Firewall and BBR
 
-Use **12 → Firewall / BBR**. The menu groups firewall actions (1–5) and BBR actions (6–8), with one item per line:
+Use **l → Firewall / BBR**. The menu groups firewall actions (1–5) and BBR actions (6–8), with one item per line:
 
 - **1**: show UFW/firewalld status plus firewalld default/active zones.
 - **2**: install and enable UFW. Refuse active firewalls and effective netfilter state outside the supported Fail2ban structure. Require confirmed SSH ports without assuming 22, merge the current SSH_CONNECTION server port and managed node ports, and accept other TCP services such as websites on 80/443. After preview and `y`, install UFW with APT if missing, stage allows, set deny-incoming/allow-outgoing defaults, then enable it. Restrictive/routed stored UFW rules or invalid IPv6 configuration stop initialization. Failed activation attempts to return to inactive; failed rollback directs the user to the provider console. Added rules, defaults and packages may remain for inspection/retry.
