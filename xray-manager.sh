@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.14
+VERSION=0.1.15
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -85,7 +85,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.14"
+VERSION = "0.1.15"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -324,6 +324,19 @@ def warp_prepare(root, binary, number, domains, disable=False):
     except BaseException:
         shutil.rmtree(stage)
         raise
+
+
+def warp_status(root, language="zh"):
+    root = checked_path(root)
+    warp = None
+    if root.exists():
+        ensure_owned(root)
+        warp = load_state(root).get("warp")
+    if not warp:
+        return "Status: WARP routing disabled" if language == "en" else "当前状态：未启用 WARP 分流"
+    if language == "en":
+        return f"Routing: Selected domains use WARP\nLocal proxy: 127.0.0.1:{warp['port']} | Suffixes: {len(warp['domains'])}"
+    return f"当前模式：仅指定域名使用 WARP\n本机代理：127.0.0.1:{warp['port']} | 域名后缀：{len(warp['domains'])} 个"
 
 
 def warp_verify(number):
@@ -1557,13 +1570,7 @@ def main():
         print(f"WARP 出口已验证 / WARP egress verified: {ip} ({country})")
         return
     if options.command == "warp-status":
-        root = checked_path(options.root)
-        if not root.exists():
-            print("WARP 未启用分流 / WARP routing disabled")
-            return
-        ensure_owned(root)
-        warp = load_state(root).get("warp")
-        print(f"WARP: 127.0.0.1:{warp['port']} | " + ", ".join(warp['domains']) if warp else "WARP 未启用分流 / WARP routing disabled")
+        print(warp_status(Path(options.root), options.language))
         return
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
@@ -2588,8 +2595,35 @@ PY_WARP_MEDIA
 }
 warp_menu(){
  local choice proxy_port stage
- helper warp-status || return 1
- menu 'WARP 分流与平台检测\n1 安装官方 WARP 本机代理\n2 使用已有本机代理 / 修改分流平台\n3 关闭 WARP 分流，恢复直连\n4 检查 WARP 出口\n5 Netflix / Disney+ / ChatGPT / Gemini 直连与 WARP 对比\n0 返回' 'WARP routing and platform tests\n1 Install official WARP local proxy\n2 Existing local proxy / change routing profile\n3 Disable WARP routing, restore direct\n4 Verify WARP egress\n5 Compare Netflix / Disney+ / ChatGPT / Gemini over direct and WARP\n0 Back'
+ printf '\n%s%s%s\n' "$CYAN" "$(if [[ $LANGUAGE == en ]]; then printf '========== WARP Manager =========='; else printf '========== WARP 管理 =========='; fi)" "$RESET"
+ helper warp-status --language "$LANGUAGE" || return 1
+ menu '
+【代理设置】
+1. 安装官方 WARP 本机代理
+
+【分流设置】
+2. 使用已有代理 / 选择分流平台
+3. 关闭 WARP 分流，恢复直连
+
+【连接检测】
+4. 验证 WARP 出口
+5. 对比直连 / WARP 平台响应
+
+0. 返回
+--------------------------------------' '
+[Proxy setup]
+1. Install official WARP local proxy
+
+[Routing]
+2. Existing proxy / choose platforms
+3. Disable WARP routing, restore direct
+
+[Connection tests]
+4. Verify WARP egress
+5. Compare direct / WARP platform responses
+
+0. Back
+--------------------------------------'
  choice=$(ask '> ' '> ') || return 0
  case $choice in
   1) warp_install_client;;

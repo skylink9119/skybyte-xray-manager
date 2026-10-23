@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import unittest
+import unicodedata
 from unittest import mock
 import test_services as services
 from test_manager import TemporaryFixture, PROJECT, ENGINE, core, example_node, free_port
@@ -56,6 +57,21 @@ class WarpConfigTests(TemporaryFixture):
         self.state['nodes']['vision']['port'] = 40000
         with self.assertRaisesRegex(ValueError, 'conflicts'):
             core.validate_state(self.state)
+
+    def test_status_is_localized_compact_and_does_not_write_or_list_private_data(self):
+        self.assertIn('未启用', core.warp_status(self.root, 'zh'))
+        self.assertFalse(self.root.exists())
+        core.ensure_owned(self.root, True)
+        core.write_private(self.root / 'state.json', core.json_text(self.state))
+        before = (self.root / 'state.json').read_bytes()
+        for language, expected in [('zh', '当前模式'), ('en', 'Routing')]:
+            report = core.warp_status(self.root, language)
+            self.assertIn(expected, report)
+            self.assertIn('127.0.0.1:40000', report)
+            self.assertNotIn('chatgpt.com', report)
+            self.assertNotIn(self.state['nodes']['vision']['uuid'], report)
+            self.assertEqual(len(report.splitlines()), 2)
+        self.assertEqual(before, (self.root / 'state.json').read_bytes())
 
     def test_only_loopback_verified_warp_egress_is_accepted(self):
         listener = 'LISTEN 0 128 127.0.0.1:40000 0.0.0.0:*\n'
@@ -229,6 +245,19 @@ warp_menu
             self.assertIn('warp-check --proxy-port 40001', calls)
             self.assertIn('warp-prepare --proxy-port 40001 --domains chatgpt.com openai.com', calls)
             self.assertEqual(calls[-1], 'apply /mock-stage')
+
+    def test_grouped_bilingual_menu_has_newlines_and_fits_eighty_columns(self):
+        for language in ['zh', 'en']:
+            result, calls = self.shell('0\n', language=language)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('warp-status --language ' + language, calls)
+            self.assertNotIn(r'\n', result.stdout)
+            self.assertIn('【分流设置】' if language == 'zh' else '[Routing]', result.stdout)
+            numbers = [int(line.split('.', 1)[0]) for line in result.stdout.splitlines() if line[:1].isdigit() and '. ' in line]
+            self.assertEqual(numbers, [1, 2, 3, 4, 5, 0])
+            for line in result.stdout.splitlines():
+                width = sum(2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1 for char in line)
+                self.assertLessEqual(width, 80, line)
 
     def test_cancellation_and_failed_egress_never_apply_routing(self):
         for inputs, failed in [('2\n\n4\n\n', False), ('2\n\n0\n', False), ('2\n\n4\ny\n', True), ('3\nn\n', False)]:

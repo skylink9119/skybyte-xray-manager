@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.15 — 2026-10-23
+
+- Group WARP controls into proxy setup, routing and connection tests with one short option per line, preserving menu numbers.
+- Localize and shorten WARP status to the mode, loopback proxy and suffix count instead of printing a long domain list.
+- Verify bilingual newlines, 80-column layout, privacy and read-only status alongside existing routing/cancellation tests.
+
 ## 0.1.14 — 2026-10-23
 
 - Show local server resources, actual Xray version, service/boot state, node ports, BBR and related components whenever the main menu opens; tolerate missing probes without network requests or configuration writes.

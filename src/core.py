@@ -30,7 +30,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.14"
+VERSION = "0.1.15"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -269,6 +269,19 @@ def warp_prepare(root, binary, number, domains, disable=False):
     except BaseException:
         shutil.rmtree(stage)
         raise
+
+
+def warp_status(root, language="zh"):
+    root = checked_path(root)
+    warp = None
+    if root.exists():
+        ensure_owned(root)
+        warp = load_state(root).get("warp")
+    if not warp:
+        return "Status: WARP routing disabled" if language == "en" else "当前状态：未启用 WARP 分流"
+    if language == "en":
+        return f"Routing: Selected domains use WARP\nLocal proxy: 127.0.0.1:{warp['port']} | Suffixes: {len(warp['domains'])}"
+    return f"当前模式：仅指定域名使用 WARP\n本机代理：127.0.0.1:{warp['port']} | 域名后缀：{len(warp['domains'])} 个"
 
 
 def warp_verify(number):
@@ -1502,13 +1515,7 @@ def main():
         print(f"WARP 出口已验证 / WARP egress verified: {ip} ({country})")
         return
     if options.command == "warp-status":
-        root = checked_path(options.root)
-        if not root.exists():
-            print("WARP 未启用分流 / WARP routing disabled")
-            return
-        ensure_owned(root)
-        warp = load_state(root).get("warp")
-        print(f"WARP: 127.0.0.1:{warp['port']} | " + ", ".join(warp['domains']) if warp else "WARP 未启用分流 / WARP routing disabled")
+        print(warp_status(Path(options.root), options.language))
         return
     if options.command != "edit":
         options.port = options.port if options.port is not None else "443"
