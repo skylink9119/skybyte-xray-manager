@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.16 — 2026-10-24
+
+- Use case-insensitive a–n main-menu entries and q to exit, numeric submenus and 0 to return one level. Keep previous main-menu numbers as compatibility aliases.
+- Keep firewall/BBR, service, node-edit and WARP menus open after completed, cancelled or failed operations; EOF returns cleanly. Preserve existing firewall checks and node transaction rollback.
+- Update bilingual help/navigation references and add continuous-operation, cancellation, failure and EOF regression checks.
+
 ## 0.1.15 — 2026-10-23
 
 - Group WARP controls into proxy setup, routing and connection tests with one short option per line, preserving menu numbers.
