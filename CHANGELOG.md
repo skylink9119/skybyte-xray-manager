@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.14 — 2026-10-23
+
+- Show local server resources, actual Xray version, service/boot state, node ports, BBR and related components whenever the main menu opens; tolerate missing probes without network requests or configuration writes.
+- Add menu 14 for official WARP local-proxy installation, existing SOCKS5 gateways, Netflix/Disney+/ChatGPT/Gemini/custom domain routing, verified egress and direct/WARP anonymous page comparisons.
+- Preserve credentials, private-destination blocking and unmatched direct traffic; block matching UDP for TCP fallback, validate candidates and roll back failed service changes. Include routing in existing backup/restore transactions.
+- Preserve existing WARP clients/data and other projects; add bounded readiness checks and explicit cancellation. WARP egress and page responses do not prove playback or account access.
+
 ## 0.1.13 — 2026-10-23
 
 - Standardize manager and installer dependency confirmations as [y/N]; y/Y confirms, while Enter, n/N and invalid input cancel the action. CDN selection uses y/Y to enable and defaults to direct connections.

@@ -13,7 +13,7 @@ from test_manager import TemporaryFixture, ENGINE, PROJECT, core, example_node, 
 
 
 @unittest.skipUnless(ENGINE,'Set XRAY_BIN to the official Xray binary')
-class ServiceTests(TemporaryFixture):
+class ServiceFixture(TemporaryFixture):
     def setUp(self):
         super().setUp()
         self.tools=self.base/'tools';self.tools.mkdir()
@@ -60,6 +60,7 @@ p.write_text(json.dumps(x));sys.exit(result)
         return subprocess.run(['bash','-c','source "$1"; '+command,'test',str(PROJECT/'xray-manager.sh'),*map(str,arguments)],
             env=self.env,capture_output=True,text=True)
 
+class ServiceTests(ServiceFixture):
     def test_first_install_success_starts_and_enables_owned_service(self):
         state={'schema':1,'nodes':{'vision':example_node()}}
         result=self.shell('apply_stage "$2" yes',self.stage(state))

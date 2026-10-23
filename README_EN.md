@@ -28,7 +28,21 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.13**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.14**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+
+## Startup overview
+
+The main menu shows OS, architecture, kernel, CPU, memory/swap, root-disk use, uptime and load; actual Xray version, service and boot state, installed protocols/ports, current BBR and configured WARP routing. Related components include the official WARP client, UFW, firewalld, Fail2ban and QR utility, with installation and runtime states distinguished. Probes are local, read-only and bounded to two seconds per command. Missing probes do not block the menu. No credentials are displayed; configured routing is not proof of connectivity.
+
+## WARP routing and platform tests
+
+Open **14** to install the official local-proxy client, reuse a loopback SOCKS5 gateway or restore direct routing for this project. Installation uses the [official signed Cloudflare repository](https://pkg.cloudflareclient.com/), asks for terms confirmation and configures local-proxy mode (default `127.0.0.1:40000`). Existing clients or residual registration data stop automatic installation. An existing proxy can be shared with sing-box while each project manages its own routes.
+
+Choose Netflix, Disney+, ChatGPT, Gemini, all four, or custom domain suffixes. Before applying, verify loopback-only listening and a real HTTPS Cloudflare trace request through proxy-side DNS, including `warp=on/plus`, a global egress IP and country. Only matching TCP uses WARP; unmatched traffic stays direct and matching UDP is blocked for application TCP fallback. Domain sniffing cannot guarantee matches for IP-only traffic, ECH or unlisted domains. System default routes are untouched; selected WARP traffic does not silently fall back to direct on failure. Platform access or a specific country is not guaranteed.
+
+Candidate validation, rollback and existing backups cover routing alongside nodes. Credentials and prior service activity are preserved; failed restarts restore configuration. Restored WARP routing requires the corresponding local proxy. Disabling routing/removing the manager retains the WARP package, registration, connection and repository; other projects are untouched.
+
+Option **5** compares anonymous Netflix, Disney+, ChatGPT and Gemini responses through direct IPv4 and WARP. Page access and a successful trace do not prove playback, catalog coverage or account access. No third-party scripts or login credentials are used. Private reports contain classifications/status only in `reports/`, mode 600. See [WARP local proxy mode](https://developers.cloudflare.com/warp-client/warp-modes/) and [Xray SOCKS outbound](https://xtls.github.io/en/config/outbounds/socks.html).
 
 ## Nodes
 
@@ -95,7 +109,7 @@ The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality
 
 ## Manager self-update
 
-Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.13 installer once to obtain this menu.
+Menu **13** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.14 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 
