@@ -261,3 +261,45 @@ sys.exit(100 if 'update' in sys.argv else 0)
 
 
 if __name__=='__main__': unittest.main()
+
+class RealityReplacementTests(ServiceFixture):
+    def snapshot(self):
+        return {p.relative_to(self.root):p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+    def test_xhttp_replacement_preserves_all_credentials_and_other_nodes(self):
+        old=self.installed();old['nodes']['xhttp-reality']=example_node('xhttp-reality')
+        old['nodes']['xhttp-reality']['port']=free_port()
+        for relative,data in core.render_files(old,self.root).items():core.write_private(self.root/relative,data)
+        self.set_controller(active=True,enabled=True)
+        inputs='2\n6\nnode.example\nendpoint.example:8443\ny\n'
+        result=self.shell('reality_engine(){ return 0; };sleep(){ :; };reality_menu 3 <<< "$2"',inputs)
+        self.assertEqual(result.returncode,0,result.stderr)
+        expected=json.loads(json.dumps(old));expected['nodes']['xhttp-reality'].update(sni='node.example',target='endpoint.example:8443')
+        self.assertEqual(core.load_state(self.root),expected)
+        self.assertEqual(json.loads((self.root/'client-xhttp-reality.json').read_text())['outbounds'][0]['streamSettings']['realitySettings']['serverName'],'node.example')
+        self.assertIn('sni=node.example',(self.root/'nodes.txt').read_text())
+        self.assertEqual(self.state()['history'].count('restart'),1)
+        self.assertTrue(self.state()['enabled'])
+    def test_failed_probe_cancel_and_invalid_target_never_modify_files(self):
+        self.installed();before=self.snapshot()
+        for status,inputs in ((1,'1\n2\n\ny\n'),(0,'1\n2\n\nn\n'),(0,'1\n2\nbad;host:443\ny\n')):
+            result=self.shell('reality_engine(){ return '+str(status)+'; };reality_menu 3 <<< "$2"',inputs)
+            if status:self.assertNotEqual(result.returncode,0)
+            self.assertEqual(self.snapshot(),before)
+        self.assertNotIn('restart',self.state()['history'])
+    def test_replacement_restart_failure_rolls_back_exports_and_service_state(self):
+        old=self.installed();before=self.snapshot();self.set_controller(active=True,enabled=False,fail_restart=True)
+        result=self.shell('reality_engine(){ return 0; };sleep(){ :; };reality_menu 3 <<< "$2"','1\n2\n\ny\n')
+        self.assertNotEqual(result.returncode,0);self.assertEqual(self.snapshot(),before)
+        self.assertEqual(core.load_state(self.root),old);self.assertTrue(self.state()['active']);self.assertFalse(self.state()['enabled'])
+    def test_no_reality_and_uninstalled_selection_do_not_create_nodes(self):
+        before=self.snapshot();result=self.shell('reality_menu 3')
+        self.assertEqual(result.returncode,0,result.stderr);self.assertIn('未安装 Reality',result.stdout);self.assertEqual(self.snapshot(),before)
+        self.installed();before=self.snapshot();result=self.shell('reality_menu 3 <<< "$2"','2\n')
+        self.assertNotEqual(result.returncode,0);self.assertEqual(self.snapshot(),before)
+    def test_pure_edit_rejects_tls_and_changes_only_target_fields(self):
+        old={'schema':1,'nodes':{'vision':example_node()}}
+        new=core.edit_reality(old,'vision','WWW.APPLE.COM','www.apple.com:443')
+        expected=json.loads(json.dumps(old));expected['nodes']['vision'].update(sni='www.apple.com',target='www.apple.com:443')
+        self.assertEqual(new,expected);self.assertNotEqual(old,new)
+        for kind,target in (('xhttp-tls','www.apple.com:443'),('vision','www.apple.com:0'),('vision','www.apple.com:99999')):
+            with self.assertRaises(ValueError):core.edit_reality(old,kind,'www.apple.com',target)

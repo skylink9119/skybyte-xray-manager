@@ -30,7 +30,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.18"
+VERSION = "0.1.19"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -445,6 +445,16 @@ def edit_state(state, kind, client_address=None, node_port=None, path=None):
     if node["port"] != old_port:
         check_port(node["listen"], node["port"])
     return state
+
+
+def edit_reality(state, kind, sni, target):
+    state = copy.deepcopy(state)
+    if kind not in ('vision', 'xhttp-reality') or kind not in state['nodes']:
+        raise ValueError('Installed Reality node required / 请先选择已安装的 Reality 节点')
+    host, number = target.rsplit(':', 1)
+    node = state['nodes'][kind]
+    node.update(sni=domain(sni), target=domain(host) + ':' + str(port(number)))
+    return validate_state(state)
 
 
 def prepare(root, binary, options):
@@ -1470,7 +1480,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "overview", "warp-prepare", "warp-check", "warp-profile", "warp-status", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
+                                            "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -1498,6 +1508,7 @@ def main():
     parser.add_argument("--release", default="")
     parser.add_argument("--ssh-ports", nargs="+", default=[])
     parser.add_argument("--purge", action="store_true")
+    parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--language", choices=["zh", "en"], default="zh")
     parser.add_argument("--proxy-port", type=int, default=40000)
     parser.add_argument("--domains", nargs="+", default=[])
@@ -1640,6 +1651,11 @@ def main():
         backup(root, Path(options.file))
     elif options.command == "restore":
         print(restore_stage(root, binary, Path(options.file), options.ca_file))
+    elif options.command == 'reality-targets':
+        ensure_owned(root)
+        for kind, node in load_state(root)['nodes'].items():
+            if kind != 'xhttp-tls':
+                print('\t'.join((kind, node['target'], node['sni'])))
     elif options.command == "show":
         ensure_owned(root)
         for kind, node in load_state(root)["nodes"].items():
@@ -1656,6 +1672,10 @@ def main():
             state["nodes"][options.kind]["name"] = name(options.name)
         elif options.command == "edit":
             state = edit_state(state, options.kind, options.address, options.port, options.path)
+        elif options.command == 'reality-edit':
+            state = edit_reality(state, options.kind, options.sni, options.target)
+            if options.check_only:
+                return
         elif options.command == "refresh-tls":
             if options.kind != "xhttp-tls":
                 raise ValueError("TLS protocol required")

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.19 — 2026-10-26
+
+- Add Reality target replacement in `o → 3`: select an installed Vision or XHTTP/Reality node, choose a preset/custom SNI and target, pass DNS/TCP/TLS 1.3/certificate/HTTP/2 checks, then confirm with `y`.
+- Preserve UUIDs, key pairs, short IDs, node ports, XHTTP paths/modes, routing and other nodes. Refresh client exports transactionally; restore files and prior service state if validation or restart fails. Failed checks and cancellation make no changes.
+- Add regression coverage for replacement, independent targets/ports, credential retention, failed checks, cancellation, missing nodes and rollback.
+
 ## 0.1.18 — 2026-10-26
 
 - Recognize the distinct `socket.timeout` exception used by Python 3.9, so a stalled Reality target is reported as a timeout rather than a local system failure. Add a compatibility regression without changing node configuration or TLS verification.
