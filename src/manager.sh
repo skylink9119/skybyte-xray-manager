@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.18
+VERSION=0.1.19
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -771,10 +771,38 @@ reality_engine(){ python3 - "$@" <<'PY_REALITY'
 # BUILD_REALITY
 PY_REALITY
 }
+reality_replace(){
+ local current choice kind available=no item _old_target _old_sni sni target stage
+ current=$(helper reality-targets) || return 1
+ [[ -n $current ]] || { warn '未安装 Reality 节点，无需更换；可选择检测自定义网站。' 'No Reality node installed; use a custom target check instead.';return 0; }
+ say '当前节点 / 握手目标 / SNI：' 'Current node / target / SNI:'
+ printf '%s\n' "$current"
+ menu '选择要更换的节点\n1. Reality + Vision\n2. XHTTP + Reality\n0. 返回' 'Select the node to update\n1. Reality + Vision\n2. XHTTP + Reality\n0. Back'
+ choice=$(ask '> ' '> ') || return 0
+ case $choice in 1) kind=vision;;2) kind=xhttp-reality;;0) return 0;;*) return 1;;esac
+ while IFS=$'\t' read -r item _old_target _old_sni;do
+  [[ $item != "$kind" ]] || available=yes
+ done <<< "$current"
+ [[ $available == yes ]] || { error '所选 Reality 节点尚未安装，保留原配置。' 'Selected Reality node is not installed; configuration retained.';return 1; }
+ sni=$(choose_reality_sni) || return 0
+ [[ -n $sni ]] || return 0
+ target=$(ask "握手目标 [$sni:443]（0 返回）：" "Handshake target [$sni:443] (0 to return): ") || return 0
+ [[ $target != 0 ]] || return 0
+ target=${target:-$sni:443}
+ helper reality-edit --kind "$kind" --sni "$sni" --target "$target" --check-only || return 1
+ if ! reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";then
+  error '新目标检测未通过，保留原配置。' 'New target failed checks; original configuration retained.';return 1
+ fi
+ warn '更换会短暂重启正在运行的服务；保留 UUID、密钥、端口及路径。所选节点的客户端需重新导入更新后的配置。' 'Running services will briefly restart; UUID, keys, port and path are retained. Re-import updated configuration on clients of this node.'
+ confirm '将所选节点的 Reality 握手网站更换为上述目标？' 'Apply this Reality handshake target to the selected node?' || return 0
+ stage=$(helper reality-edit --kind "$kind" --sni "$sni" --target "$target") || return 1
+ apply_stage "$stage" || return 1
+ say 'Reality 握手网站已更换；请重新导入节点或更新客户端 SNI。' 'Reality target updated; re-import the node or update client SNI.'
+}
 reality_menu(){
  local choice target sni
  if [[ $# == 0 || $1 == --menu ]]; then
-  menu 'Reality 握手网站检测\n1. 检测当前节点的握手网站\n2. 检测自定义网站\n0. 返回' 'Reality handshake target checks\n1. Check configured Reality targets\n2. Check a custom target\n0. Back'
+  menu 'Reality 握手网站检测\n1. 检测当前节点的握手网站\n2. 检测自定义网站\n3. 更换握手网站（先检测后应用）\n0. 返回' 'Reality handshake target checks\n1. Check configured Reality targets\n2. Check a custom target\n3. Change handshake target (check before applying)\n0. Back'
   [[ ${1:-} != --menu ]] || return 0
   choice=$(ask '> ' '> ') || return 0
  else choice=$1; fi
@@ -785,6 +813,7 @@ reality_menu(){
      [[ -n $target ]] || { error '请填写握手目标。' 'Enter a target.';return 1; }
      sni=$(ask '握手域名 / SNI（回车使用目标域名）：' 'Handshake SNI (Enter uses target hostname): ') || return 0
      reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";;
+  3) reality_replace;;
   0) return 0;; *) return 1;;
  esac
 }

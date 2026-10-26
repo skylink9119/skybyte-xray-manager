@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.18
+VERSION=0.1.19
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -85,7 +85,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.18"
+VERSION = "0.1.19"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -500,6 +500,16 @@ def edit_state(state, kind, client_address=None, node_port=None, path=None):
     if node["port"] != old_port:
         check_port(node["listen"], node["port"])
     return state
+
+
+def edit_reality(state, kind, sni, target):
+    state = copy.deepcopy(state)
+    if kind not in ('vision', 'xhttp-reality') or kind not in state['nodes']:
+        raise ValueError('Installed Reality node required / 请先选择已安装的 Reality 节点')
+    host, number = target.rsplit(':', 1)
+    node = state['nodes'][kind]
+    node.update(sni=domain(sni), target=domain(host) + ':' + str(port(number)))
+    return validate_state(state)
 
 
 def prepare(root, binary, options):
@@ -1525,7 +1535,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "overview", "warp-prepare", "warp-check", "warp-profile", "warp-status", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
+                                            "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -1553,6 +1563,7 @@ def main():
     parser.add_argument("--release", default="")
     parser.add_argument("--ssh-ports", nargs="+", default=[])
     parser.add_argument("--purge", action="store_true")
+    parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--language", choices=["zh", "en"], default="zh")
     parser.add_argument("--proxy-port", type=int, default=40000)
     parser.add_argument("--domains", nargs="+", default=[])
@@ -1695,6 +1706,11 @@ def main():
         backup(root, Path(options.file))
     elif options.command == "restore":
         print(restore_stage(root, binary, Path(options.file), options.ca_file))
+    elif options.command == 'reality-targets':
+        ensure_owned(root)
+        for kind, node in load_state(root)['nodes'].items():
+            if kind != 'xhttp-tls':
+                print('\t'.join((kind, node['target'], node['sni'])))
     elif options.command == "show":
         ensure_owned(root)
         for kind, node in load_state(root)["nodes"].items():
@@ -1711,6 +1727,10 @@ def main():
             state["nodes"][options.kind]["name"] = name(options.name)
         elif options.command == "edit":
             state = edit_state(state, options.kind, options.address, options.port, options.path)
+        elif options.command == 'reality-edit':
+            state = edit_reality(state, options.kind, options.sni, options.target)
+            if options.check_only:
+                return
         elif options.command == "refresh-tls":
             if options.kind != "xhttp-tls":
                 raise ValueError("TLS protocol required")
@@ -2888,6 +2908,8 @@ def main(argv=None):
     parser.add_argument('--target')
     parser.add_argument('--sni', default='')
     parser.add_argument('--config')
+    parser.add_argument('--list', action='store_true', help='List configured target/SNI pairs without probing')
+    parser.add_argument('--normalize', action='store_true', help='Print validated host, port and SNI without probing')
     parser.add_argument('--project', choices=('sing-box', 'xray'), required=True)
     parser.add_argument('--language', choices=('zh', 'en', 'zh_CN', 'en_US'), default='zh')
     args = parser.parse_args(argv)
@@ -2905,8 +2927,19 @@ def main(argv=None):
               '目标 / 握手域名无效，或无法读取 Reality 配置；请输入域名或 域名:端口。', file=sys.stderr)
         return 2
     if not targets:
+        if args.list:
+            return 0
         print('No configured Reality targets; choose custom target check.' if english else
               '未找到已配置的 Reality 握手目标，可选择“检测自定义网站”。')
+        return 0
+    if args.normalize:
+        if args.target is None:
+            return 2
+        print('\t'.join((host, str(number), sni)))
+        return 0
+    if args.list:
+        for target, sni in targets:
+            print(target + '\t' + sni)
         return 0
     failed = False
     for target, sni in targets:
@@ -2923,10 +2956,38 @@ if __name__ == '__main__':
 
 PY_REALITY
 }
+reality_replace(){
+ local current choice kind available=no item _old_target _old_sni sni target stage
+ current=$(helper reality-targets) || return 1
+ [[ -n $current ]] || { warn '未安装 Reality 节点，无需更换；可选择检测自定义网站。' 'No Reality node installed; use a custom target check instead.';return 0; }
+ say '当前节点 / 握手目标 / SNI：' 'Current node / target / SNI:'
+ printf '%s\n' "$current"
+ menu '选择要更换的节点\n1. Reality + Vision\n2. XHTTP + Reality\n0. 返回' 'Select the node to update\n1. Reality + Vision\n2. XHTTP + Reality\n0. Back'
+ choice=$(ask '> ' '> ') || return 0
+ case $choice in 1) kind=vision;;2) kind=xhttp-reality;;0) return 0;;*) return 1;;esac
+ while IFS=$'\t' read -r item _old_target _old_sni;do
+  [[ $item != "$kind" ]] || available=yes
+ done <<< "$current"
+ [[ $available == yes ]] || { error '所选 Reality 节点尚未安装，保留原配置。' 'Selected Reality node is not installed; configuration retained.';return 1; }
+ sni=$(choose_reality_sni) || return 0
+ [[ -n $sni ]] || return 0
+ target=$(ask "握手目标 [$sni:443]（0 返回）：" "Handshake target [$sni:443] (0 to return): ") || return 0
+ [[ $target != 0 ]] || return 0
+ target=${target:-$sni:443}
+ helper reality-edit --kind "$kind" --sni "$sni" --target "$target" --check-only || return 1
+ if ! reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";then
+  error '新目标检测未通过，保留原配置。' 'New target failed checks; original configuration retained.';return 1
+ fi
+ warn '更换会短暂重启正在运行的服务；保留 UUID、密钥、端口及路径。所选节点的客户端需重新导入更新后的配置。' 'Running services will briefly restart; UUID, keys, port and path are retained. Re-import updated configuration on clients of this node.'
+ confirm '将所选节点的 Reality 握手网站更换为上述目标？' 'Apply this Reality handshake target to the selected node?' || return 0
+ stage=$(helper reality-edit --kind "$kind" --sni "$sni" --target "$target") || return 1
+ apply_stage "$stage" || return 1
+ say 'Reality 握手网站已更换；请重新导入节点或更新客户端 SNI。' 'Reality target updated; re-import the node or update client SNI.'
+}
 reality_menu(){
  local choice target sni
  if [[ $# == 0 || $1 == --menu ]]; then
-  menu 'Reality 握手网站检测\n1. 检测当前节点的握手网站\n2. 检测自定义网站\n0. 返回' 'Reality handshake target checks\n1. Check configured Reality targets\n2. Check a custom target\n0. Back'
+  menu 'Reality 握手网站检测\n1. 检测当前节点的握手网站\n2. 检测自定义网站\n3. 更换握手网站（先检测后应用）\n0. 返回' 'Reality handshake target checks\n1. Check configured Reality targets\n2. Check a custom target\n3. Change handshake target (check before applying)\n0. Back'
   [[ ${1:-} != --menu ]] || return 0
   choice=$(ask '> ' '> ') || return 0
  else choice=$1; fi
@@ -2937,6 +2998,7 @@ reality_menu(){
      [[ -n $target ]] || { error '请填写握手目标。' 'Enter a target.';return 1; }
      sni=$(ask '握手域名 / SNI（回车使用目标域名）：' 'Handshake SNI (Enter uses target hostname): ') || return 0
      reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";;
+  3) reality_replace;;
   0) return 0;; *) return 1;;
  esac
 }
