@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.17 — 2026-10-26
+
+- Add read-only Reality target checks in main menu `o`: inspect configured TCP/Reality and XHTTP/Reality targets or test a custom hostname/port/SNI before installation.
+- Report DNS, connected TCP address, TLS 1.3, certificate trust/validity/name, HTTP/2 ALPN and a clear pass/fail summary with bounded network timeouts. Retain the current menu after checks; do not edit credentials, routes or services.
+- Add local TLS regression coverage for TLS 1.2-only peers, absent HTTP/2, incorrect/untrusted certificates, expiry reasons, DNS/TLS timeouts, multiple targets and continuous menu navigation.
+
 ## 0.1.16 — 2026-10-24
 
 - Use case-insensitive a–n main-menu entries and q to exit, numeric submenus and 0 to return one level. Keep previous main-menu numbers as compatibility aliases.

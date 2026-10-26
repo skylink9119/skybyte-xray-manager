@@ -8,6 +8,10 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 shell = (ROOT / 'src/manager.sh').read_text()
+assert shell.count('# BUILD_REALITY') == 1
+reality = (ROOT / 'src/reality.py').read_text()
+compile(reality, 'src/reality.py', 'exec')
+shell = shell.replace('# BUILD_REALITY', reality)
 assert shell.count('# BUILD_MEDIA') == 1
 media = (ROOT / 'src/media.py').read_text()
 compile(media, 'src/media.py', 'exec')

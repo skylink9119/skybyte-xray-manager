@@ -68,9 +68,18 @@ main_menu'''
         self.assertEqual(result.stdout.count('OVERVIEW'),2)
 
     def test_eof_returns_without_looping(self):
-        for inputs in ('','l\n','l\n1\n','d\n','n\n','e\n'):
+        for inputs in ('','l\n','l\n1\n','d\n','n\n','e\n','o\n','o\n2\n'):
             result=self.shell('main_menu',inputs)
             self.assertLess(len(result.stdout),20000)
+
+    def test_reality_checks_stay_open_after_failure_and_accept_custom_sni(self):
+        for language in ('zh', 'en'):
+            result = self.shell('''reality_engine(){ printf 'REALITY %s\\n' "$*";return 1; }
+main_menu''', 'O\n1\n2\ntarget.example:8443\nsni.example\n2\n0\n0\nq\n', language)
+            self.assertIn('--project xray --language '+language+' --config ', result.stdout)
+            self.assertIn('--target target.example:8443 --sni sni.example', result.stdout)
+            self.assertEqual(result.stdout.count('REALITY '), 2)
+            self.assertEqual(result.stdout.count('OVERVIEW'), 2)
 
     def test_all_letters_reach_the_matching_main_entry(self):
         actions={'a':'install_node','b':'show_nodes','c':'qr_nodes','f':'update_core',

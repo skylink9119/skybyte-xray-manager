@@ -30,7 +30,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.16"
+VERSION = "0.1.17"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
