@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.18 — 2026-10-26
+
+- Recognize the distinct `socket.timeout` exception used by Python 3.9, so a stalled Reality target is reported as a timeout rather than a local system failure. Add a compatibility regression without changing node configuration or TLS verification.
+
 ## 0.1.17 — 2026-10-26
 
 - Add read-only Reality target checks in main menu `o`: inspect configured TCP/Reality and XHTTP/Reality targets or test a custom hostname/port/SNI before installation.
