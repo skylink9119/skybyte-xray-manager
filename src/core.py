@@ -30,7 +30,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.19"
+VERSION = "0.1.20"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -352,6 +352,41 @@ def load_state(root):
     p = root / "state.json"
     checked_path(p)
     return validate_state(json.loads(p.read_text())) if p.exists() else {"schema": 1, "nodes": {}}
+
+
+def node_parameters(root, language="zh"):
+    def tr(zh, en):
+        return en if language == "en" else zh
+    lines = [tr("========== 保密提醒 ==========", "========== KEEP PRIVATE =========="),
+             tr("本脚本的节点配置、凭据、订阅和备份等重要数据保存在当前 VPS，请妥善保管。",
+                "Node configuration, credentials, subscriptions and backups are stored on this VPS. Protect them."),
+             tr("请在可信终端查看；不要公开节点参数、完整链接、二维码或截图。",
+                "Use a trusted terminal. Do not publish node parameters, full links, QR codes or screenshots."),
+             tr("请务必安装并启用防火墙：主菜单 l → 2；先放行 SSH 和实际节点端口。",
+                "Install and enable a firewall: main menu l → 2. Allow SSH and actual node ports first.")]
+    if not checked_path(root / "state.json").exists():
+        return "\n".join(lines + [tr("尚未安装节点。", "No nodes installed.")])
+    ensure_owned(root)
+    state = load_state(root)
+    for kind in KINDS:
+        if kind not in state["nodes"]:
+            continue
+        node = state["nodes"][kind]
+        lines += ["-" * 60, node["name"] + " | " + kind,
+                  tr("连接地址: ", "Server address: ") + node["address"],
+                  tr("端口: ", "Port: ") + str(node["port"]), "UUID: " + node["uuid"]]
+        if kind == "xhttp-tls":
+            na = tr("不适用（TLS 节点不使用 Reality）", "Not applicable (TLS node does not use Reality)")
+            lines += [tr("公钥: ", "Public key: ") + na, "Short ID: " + na,
+                      tr("TLS 域名（SNI）: ", "TLS SNI: ") + node["sni"],
+                      tr("Reality 握手目标: ", "Reality target: ") + na]
+        else:
+            lines += [tr("公钥: ", "Public key: ") + node["public"], "Short ID: " + node["short_id"],
+                      tr("握手网站（SNI）: ", "Handshake SNI: ") + node["sni"],
+                      tr("Reality 握手目标: ", "Reality target: ") + node["target"]]
+    if not state["nodes"]:
+        lines.append(tr("尚未安装节点。", "No nodes installed."))
+    return "\n".join(lines)
 
 
 def ensure_owned(root, create=False):
@@ -1480,7 +1515,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "overview", "warp-prepare", "warp-check", "warp-profile", "warp-status", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
+                                            "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "parameters", "guard", "download", "probe", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -1515,6 +1550,9 @@ def main():
     parser.add_argument("--profile", choices=["all", *WARP_PROFILES], default="all")
     parser.add_argument("--disable", action="store_true")
     options = parser.parse_args()
+    if options.command == "parameters":
+        print(node_parameters(checked_path(options.root), options.language))
+        return
     if options.command == "overview":
         print(startup_overview(Path(options.root), Path(options.binary), options.language))
         return

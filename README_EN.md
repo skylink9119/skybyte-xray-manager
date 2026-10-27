@@ -28,7 +28,7 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.19**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.20**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Startup overview
 
@@ -88,6 +88,12 @@ Menus and prompts are bold green; metadata and warnings yellow; links and errors
 
 The client connection address is required: enter this VPS's public IP or a domain pointing to it. This is separate from the Reality handshake name. Only bracketed defaults accept an empty answer. Address and listening port checks run first. If TCP 443 is occupied, for example by sing-box or a website, select another free port and allow its TCP traffic rather than stopping an existing service. `TLSv1.3 / h2` means only that the handshake target passed its check; configuration and service startup must still complete.
 
+## View node parameters
+
+Main menu **p** displays each node's UUID, Reality public key, short ID, SNI and handshake target, plus its address and port. TLS nodes label Reality fields as not applicable. The action reads local managed state without exports, network requests, configuration changes or service restarts. Server private keys are excluded.
+
+**Node configuration, credentials, subscriptions and backups are stored on this VPS. Keep parameters, full links, QR codes and screenshots private. Install and enable a firewall through l → 2, allowing SSH and actual node ports first, and inspect provider security groups.**
+
 ## Reality handshake target checks
 
 Open main menu **o**: **1** checks targets from the current TCP/Reality and XHTTP/Reality configuration; **2** checks a custom target. Enter a hostname or `host:port` (default 443), then an optional separate SNI; Enter uses the target hostname. Duplicate target/SNI pairs are checked once. Custom checks work before Reality is installed.
@@ -100,7 +106,7 @@ Choose **3** to replace a target: select an installed Vision or XHTTP/Reality no
 
 ## Menu
 
-The main menu uses case-insensitive letters `a–o`; submenus use numbers. `0` returns one level and `q` exits from the main menu. Completed, cancelled and failed operations keep the current submenu open for consecutive firewall, service, node-edit and WARP operations. Previous main-menu numbers remain compatibility aliases.
+The main menu uses case-insensitive letters `a–p`; submenus use numbers. `0` returns one level and `q` exits from the main menu. Completed, cancelled and failed operations keep the current submenu open for consecutive firewall, service, node-edit and WARP operations. Previous main-menu numbers remain compatibility aliases.
 
 a. Install/add a node
 - **b**: View nodes and client exports
@@ -114,6 +120,7 @@ a. Install/add a node
 - **m**: Update manager script
 - **n**: WARP routing and platform tests
 - **o**: Reality target checks and target replacement
+- **p**: View UUID, public key, short ID and handshake SNI/target; keep private
 - **q**: Exit
 
 Permit actual TCP ports in the system firewall and provider security group. Menu l manages host TCP allows; provider security groups remain manual.
@@ -124,7 +131,7 @@ The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality
 
 ## Manager self-update
 
-Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.19 installer once to obtain this menu.
+Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.20 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 
