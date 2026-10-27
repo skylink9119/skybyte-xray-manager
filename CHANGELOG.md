@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.20 — 2026-10-28
+
+- Add read-only node parameters in main menu `p`: show UUID, public key, short ID, SNI, target, address and port for each installed node; distinguish TLS nodes without Reality.
+- Remind users that sensitive data is stored on their VPS, to keep credentials/screenshots private and to install/enable a firewall after allowing SSH and node ports. Never display server private keys or regenerate exports for this view.
+- Cover multiple nodes, missing nodes, bilingual output, menu navigation, ownership and read-only/privacy behavior.
+
 ## 0.1.19 — 2026-10-26
 
 - Add Reality target replacement in `o → 3`: select an installed Vision or XHTTP/Reality node, choose a preset/custom SNI and target, pass DNS/TCP/TLS 1.3/certificate/HTTP/2 checks, then confirm with `y`.

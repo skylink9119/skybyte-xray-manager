@@ -84,7 +84,7 @@ main_menu''', 'O\n1\n2\ntarget.example:8443\nsni.example\n2\n0\n0\nq\n', languag
     def test_all_letters_reach_the_matching_main_entry(self):
         actions={'a':'install_node','b':'show_nodes','c':'qr_nodes','f':'update_core',
                  'g':'make_backup','h':'restore_backup','i':'guide','j':'choose_language',
-                 'k':'uninstall','m':'update_manager'}
+                 'k':'uninstall','m':'update_manager','p':'show_parameters'}
         for letter,action in actions.items():
             code=action+'(){ echo ACTION_'+action+';return '+('2' if letter=='m' else '0')+'; };main_menu'
             result=self.shell(code,letter.upper()+'\nq\n')

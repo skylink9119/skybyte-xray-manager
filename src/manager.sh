@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.19
+VERSION=0.1.20
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -281,6 +281,9 @@ install_node(){
  stage=$(helper prepare "${flags[@]}") || { error '节点配置准备失败，具体原因见上方提示。' 'Node configuration preparation failed; see the reason above.'; return 1; }
  apply_stage "$stage" yes || { error '安装失败，原配置已保留或回退。' 'Install failed; previous configuration retained or restored.'; return 1; }
  show_nodes
+}
+show_parameters(){
+ helper parameters --language "$LANGUAGE"
 }
 show_nodes(){
  [[ -f $SKYBYTE_XRAY_DIR/state.json ]] || { warn '尚未安装节点。' 'No nodes installed.'; return 0; }
@@ -835,7 +838,7 @@ main_menu(){
   show_startup_info
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
-  menu 'a. 安装 / 添加节点\nb. 查看节点与客户端配置\nc. 节点二维码\nd. 服务与日志\ne. 编辑节点 / 删除 / TLS 证书\nf. 更新 Xray 核心\ng. 备份配置\nh. 恢复配置\ni. 使用说明\nj. 切换语言\nk. 卸载\nl. 防火墙 / BBR\nm. 更新管理脚本\nn. WARP 分流 / 平台检测\no. Reality 握手网站检测\nq. 退出' 'a. Install / add nodes\nb. Nodes and client configs\nc. Node QR codes\nd. Service and logs\ne. Edit nodes / remove / TLS certificate\nf. Update Xray-core\ng. Back up configuration\nh. Restore configuration\ni. Guide\nj. Language\nk. Uninstall\nl. Firewall / BBR\nm. Update manager script\nn. WARP routing / platform tests\no. Reality handshake target checks\nq. Exit'
+  menu 'a. 安装 / 添加节点\nb. 查看节点与客户端配置\nc. 节点二维码\nd. 服务与日志\ne. 编辑节点 / 删除 / TLS 证书\nf. 更新 Xray 核心\ng. 备份配置\nh. 恢复配置\ni. 使用说明\nj. 切换语言\nk. 卸载\nl. 防火墙 / BBR\nm. 更新管理脚本\nn. WARP 分流 / 平台检测\no. Reality 握手网站检测\np. 查看节点参数（注意保密）\nq. 退出' 'a. Install / add nodes\nb. Nodes and client configs\nc. Node QR codes\nd. Service and logs\ne. Edit nodes / remove / TLS certificate\nf. Update Xray-core\ng. Back up configuration\nh. Restore configuration\ni. Guide\nj. Language\nk. Uninstall\nl. Firewall / BBR\nm. Update manager script\nn. WARP routing / platform tests\no. Reality handshake target checks\np. View node parameters (keep private)\nq. Exit'
   local choice
   choice=$(ask '请选择（字母）：' 'Choose (letter): ') || return 0
   case $choice in
@@ -848,6 +851,7 @@ main_menu(){
    m|M|13) if update_manager; then return 0; fi;; q|Q|0) return 0;;
    n|N|14) run_submenu warp_menu;;
    o|O|15) run_submenu reality_menu;;
+   p|P|16) show_parameters || error '无法读取节点参数，请检查本机托管配置。' 'Cannot read node parameters; inspect local managed configuration.';;
    *) warn '选项无效。' 'Invalid option.';;
   esac
  done
