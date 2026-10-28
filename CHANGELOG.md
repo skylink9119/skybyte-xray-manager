@@ -5,6 +5,7 @@
 - Run startup service, core-version and UFW probes concurrently instead of stacking two-second waits. Preserve read-only local queries, ownership checks and credential filtering.
 - Reuse a five-second in-memory overview for read-only menu returns; refresh after management actions, language changes or expiry. Cache failures briefly as well, so a broken probe does not repeatedly delay navigation.
 - Add real stalled-command timeout coverage and menu cache/refresh regressions. No new resident service or change to forwarding configuration.
+- Fix remaining installer/editor TCP TIME_WAIT false positives; preserve active-listener and managed-port conflict rejection. Reject encrypted server keys without interactive password prompts and bound certificate-chain commands.
 
 ## 0.1.22 — 2026-10-28
 

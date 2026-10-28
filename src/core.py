@@ -128,7 +128,11 @@ def certificate(cert, private_key, host, ca_file=None):
     if cert.stat().st_size > 1024 * 1024 or private_key.stat().st_size > 1024 * 1024:
         raise ValueError("Certificate file too large")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(str(cert), str(private_key))
+    def reject_password():
+        raise ValueError("Encrypted private keys are not supported for unattended service startup / 自动启动服务不支持加密私钥，请提供未加密的服务端私钥并妥善保密")
+    # Server operation is unattended. Reject encrypted keys without OpenSSL
+    # prompting on the administrator's terminal and stalling the menu.
+    context.load_cert_chain(str(cert), str(private_key), password=reject_password)
     decoded = ssl._ssl._test_decode_cert(str(cert))
     if ssl.cert_time_to_seconds(decoded["notAfter"]) <= __import__("time").time() + 86400:
         raise ValueError("Certificate expired or expires within 24h / 证书已过期或即将过期")
@@ -144,7 +148,7 @@ def certificate(cert, private_key, host, ca_file=None):
     if ca_file:
         command += ["-CAfile", str(checked_path(ca_file))]
     command += [str(cert)]
-    if subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+    if subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode:
         raise ValueError("Certificate chain untrusted / 证书链不受系统信任")
 
 
@@ -436,6 +440,7 @@ def render_files(state, root):
 def check_port(host, number):
     try:
         with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             if ":" in host:
                 listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
             listener.bind((host, number))
