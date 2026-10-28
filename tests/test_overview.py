@@ -5,6 +5,8 @@ import argparse
 import json
 import os
 import subprocess
+import sys
+import time
 from unittest import mock
 from test_manager import TemporaryFixture, PROJECT, core, example_node
 
@@ -162,16 +164,60 @@ class OverviewTests(TemporaryFixture):
     def test_main_menu_refreshes_overview_and_keeps_navigation_after_probe_failure(self):
         script = '''source "$1"
 LANGUAGE=$2
-helper(){ [[ $1 != overview ]] || { printf 'OVERVIEW %s\\n' "$*"; return 1; }; }
+calls=$3
+helper(){ [[ $1 != overview ]] || { printf 'OVERVIEW %s\\n' "$*" >> "$calls"; return 1; }; }
 service_menu(){ printf 'SERVICE_MENU\\n'; }
 main_menu
 '''
         for language in ['zh', 'en']:
-            result = subprocess.run(['bash', '-c', script, 'test', str(PROJECT / 'xray-manager.sh'), language],
+            calls = self.base / ('calls-' + language)
+            result = subprocess.run(['bash', '-c', script, 'test', str(PROJECT / 'xray-manager.sh'), language, str(calls)],
                                     input='4\n0\n', capture_output=True, text=True, timeout=5,
                                     env={**os.environ, 'NO_COLOR': '1'})
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.count(f'OVERVIEW overview --language {language}'), 2)
+            self.assertEqual(calls.read_text().splitlines(), [f'OVERVIEW overview --language {language}'] * 2)
             self.assertIn('SERVICE_MENU', result.stdout)
             self.assertIn('Overview unavailable' if language == 'en' else '状态概览暂不可用', result.stdout)
             self.assertNotIn('\x1b', result.stdout)
+
+    def test_slow_local_probes_overlap_and_time_out(self):
+        # Three stalled probes used to accumulate six seconds of timeout waits.
+        command = [sys.executable, '-c', 'import time; time.sleep(20)']
+        started = time.monotonic()
+        result = core.overview_commands(dict.fromkeys(('services', 'version', 'ufw'), command))
+        self.assertEqual(result, dict.fromkeys(('services', 'version', 'ufw'), ''))
+        self.assertLess(time.monotonic() - started, 4.5)
+
+    def test_brief_menu_cache_refreshes_for_expiry_and_language(self):
+        calls = self.base / 'calls'
+        script = '''source "$1"
+calls=$2
+helper(){ printf 'probe\\n' >> "$calls"; printf 'OVERVIEW\\n'; }
+show_startup_info
+show_startup_info
+LANGUAGE=en
+show_startup_info
+SECONDS=$((SECONDS+6))
+show_startup_info
+'''
+        result = subprocess.run(['bash', '-c', script, 'test', str(PROJECT / 'xray-manager.sh'), str(calls)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.read_text().splitlines(), ['probe'] * 3)
+        self.assertEqual(result.stdout.count('OVERVIEW'), 4)
+
+    def test_read_only_views_and_invalid_choices_reuse_failed_snapshot(self):
+        calls = self.base / 'calls'
+        script = '''source "$1"
+calls=$2
+helper(){ printf 'probe\\n' >> "$calls"; return 1; }
+guide(){ printf 'GUIDE\\n'; }
+show_parameters(){ printf 'PARAMETERS\\n'; }
+main_menu
+'''
+        result = subprocess.run(['bash', '-c', script, 'test', str(PROJECT / 'xray-manager.sh'), str(calls)],
+                                input='i\ninvalid\np\nq\n', capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.read_text().splitlines(), ['probe'])
+        self.assertIn('GUIDE', result.stdout)
+        self.assertIn('PARAMETERS', result.stdout)

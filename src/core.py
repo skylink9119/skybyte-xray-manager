@@ -7,6 +7,7 @@ Only generated runtime state contains credentials. No imported content is execut
 import argparse
 import base64
 import copy
+import concurrent.futures
 import errno
 import hashlib
 import io
@@ -30,7 +31,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.22"
+VERSION = "0.1.23"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -788,6 +789,13 @@ def overview_command(arguments):
         return ""
 
 
+def overview_commands(commands):
+    # All local probes share one short wait instead of stacking their timeouts.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        results = pool.map(overview_command, commands.values())
+        return dict(zip(commands, results))
+
+
 def startup_overview(root, binary, language="zh"):
     def tr(zh, en):
         return en if language == "en" else zh
@@ -842,7 +850,21 @@ def startup_overview(root, binary, language="zh"):
                   ("Fail2ban", "fail2ban-client", "fail2ban.service"), (tr("二维码工具", "QR utility"), "qrencode", None)]
     present = {tool: bool(shutil.which(tool)) for _, tool, _ in components}
     units = ["skybyte-xray.service", *[unit for _, tool, unit in components if unit and present[tool]]]
-    service_output = overview_command(["systemctl", "show", "--no-pager", "--property=Id,LoadState,ActiveState,UnitFileState", *units])
+    core_installed = False
+    core_version = tr("未安装", "Not installed")
+    try:
+        checked_path(binary)
+        marker = checked_path(binary.parent / ".owner")
+        core_installed = binary.is_file() and os.access(binary, os.X_OK) and marker.read_text() == OWNER
+    except (OSError, ValueError):
+        pass
+    commands = {"services": ["systemctl", "show", "--no-pager", "--property=Id,LoadState,ActiveState,UnitFileState", *units]}
+    if core_installed:
+        commands["version"] = [str(binary), "version"]
+    if present["ufw"]:
+        commands["ufw"] = ["ufw", "status"]
+    readings = overview_commands(commands)
+    service_output = readings["services"]
     services = {}
     for block in service_output.split("\n\n"):
         properties = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
@@ -864,16 +886,8 @@ def startup_overview(root, binary, language="zh"):
             return tr("已安装，未运行", "Installed, inactive")
         return tr("已安装，状态未知", "Installed, status unknown") if installed else unknown
 
-    core_installed = False
-    core_version = tr("未安装", "Not installed")
-    try:
-        checked_path(binary)
-        marker = checked_path(binary.parent / ".owner")
-        core_installed = binary.is_file() and os.access(binary, os.X_OK) and marker.read_text() == OWNER
-    except (OSError, ValueError):
-        pass
     if core_installed:
-        version_output = overview_command([str(binary), "version"])
+        version_output = readings["version"]
         match = re.search(r"^Xray\s+(\S+)", version_output)
         core_version = match[1] if match else unknown
     main_service = services.get("skybyte-xray.service", {})
@@ -906,7 +920,7 @@ def startup_overview(root, binary, language="zh"):
         if not present[tool]:
             status = tr("未安装", "Not installed")
         elif tool == "ufw":
-            ufw = overview_command(["ufw", "status"])
+            ufw = readings["ufw"]
             status = tr("已启用", "Enabled") if ufw.startswith("Status: active") else (
                 tr("已安装，未启用", "Installed, disabled") if ufw.startswith("Status: inactive") else tr("已安装，状态未知", "Installed, status unknown"))
         else:

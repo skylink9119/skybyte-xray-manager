@@ -4,7 +4,7 @@
 # Install a complete local package, or fetch the pinned, verified release payload.
 set -Eeuo pipefail
 umask 077
-RELEASE_VERSION=0.1.22
+RELEASE_VERSION=0.1.23
 RELEASE_URL=https://github.com/skylink9119/skybyte-xray-manager/releases/download/v$RELEASE_VERSION
 
 download_manager(){
