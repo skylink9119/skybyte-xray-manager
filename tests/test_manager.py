@@ -186,7 +186,7 @@ class RealityHandshakeMenuTests(TemporaryFixture):
 helper(){
  printf '%s\\n' "$*" >> "$HANDSHAKE_LOG"
  case $1 in
-  preflight) return 0;;
+  preflight|reality-input|tls-input) return 0;;
   probe) [[ $HANDSHAKE_PROBE_FAIL == no ]];;
   prepare) printf '/mock-stage';;
   *) return 1;;
@@ -195,6 +195,13 @@ helper(){
 ensure_binary(){ printf 'ensure-binary\\n' >> "$HANDSHAKE_LOG"; }
 apply_stage(){ printf 'apply %s\\n' "$*" >> "$HANDSHAKE_LOG"; }
 show_nodes(){ :; }
+install_check_engine(){ :; }
+reality_engine(){
+ local target= sni=
+ while (($#));do case $1 in --target)target=$2;shift 2;;--sni)sni=$2;shift 2;;*)shift;;esac;done
+ printf '%s\\n' "probe --target $target --sni $sni" >> "$HANDSHAKE_LOG"
+ [[ $HANDSHAKE_PROBE_FAIL == no ]]
+}
 LANGUAGE=$2
 install_node
 '''

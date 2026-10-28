@@ -28,7 +28,7 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.20**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.21**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
 ## Startup overview
 
@@ -62,7 +62,7 @@ Root, Ubuntu/Debian and systemd are required. Binary mappings support amd64 and 
 
 <!-- SKYBYTE_INSTALL_COMMAND_START -->
 ```bash
-(if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl ca-certificates; fi && script=$(curl -q -fsSL --max-time 60 https://raw.githubusercontent.com/skylink9119/skybyte-xray-manager/main/bootstrap.sh) && bash -c "$script")
+(if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl ca-certificates; fi && s=$(curl -q -fsSL --max-time 60 https://sky9119.cc/xr.sh) && [ -n "$s" ] && bash -c "$s")
 ```
 <!-- SKYBYTE_INSTALL_COMMAND_END -->
 
@@ -87,6 +87,14 @@ Independent repository: [skylink9119/skybyte-xray-manager](https://github.com/sk
 Menus and prompts are bold green; metadata and warnings yellow; links and errors red. Action confirmations use `[y/N]`: type `y` or `Y` to confirm; Enter or `n/N` cancels. Cancelling node installation returns normally to the menu instead of reporting an installation failure. Non-terminal output and NO_COLOR disable color.
 
 The client connection address is required: enter this VPS's public IP or a domain pointing to it. This is separate from the Reality handshake name. Only bracketed defaults accept an empty answer. Address and listening port checks run first. If TCP 443 is occupied, for example by sing-box or a website, select another free port and allow its TCP traffic rather than stopping an existing service. `TLSv1.3 / h2` means only that the handshake target passed its check; configuration and service startup must still complete.
+
+## Installation preflight
+
+**a → 4** checks without installing. New installs automatically check OS/architecture/systemd, Python TLS 1.3, actual APT/DPKG locks, dependencies/PATH, storage, TCP binding and firewall reminders. Reality checks DNS/TCP/TLS 1.3/certificates/HTTP2; supplied TLS certificates are validated before core download. Bounded GitHub HTTPS checks supplement digest-verified downloads.
+
+Failures stop before core download or new node generation. Diagnostics do not install packages or change nodes, firewall or services, and do not prove public inbound, provider/NAT/CDN or client connectivity. Existing startup dependency handling remains in place.
+
+**https://sky9119.cc/xr.sh** redirects through Cloudflare HTTPS to the latest stable GitHub bootstrap asset. Download services can see source IP/request metadata. The command installs missing curl and rejects failed or empty downloads.
 
 ## View node parameters
 
@@ -131,7 +139,7 @@ The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality
 
 ## Manager self-update
 
-Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.20 installer once to obtain this menu.
+Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.21 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 

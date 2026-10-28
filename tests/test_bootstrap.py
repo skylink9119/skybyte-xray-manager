@@ -49,6 +49,7 @@ curl(){
  local output=''
  while (($#));do if [[ $1 == -o ]];then output=$2;shift 2;else shift;fi;done
  if [[ -z $output ]];then
+  [[ $TEST_FAILURE != empty ]] || return 0
   printf '%s\n' 'IFS= read -r answer || exit 1' 'printf "stdin:%s\n" "$answer" >> "$TEST_ROOT/events"'
   [[ $TEST_FAILURE != download ]];return
  fi
@@ -84,7 +85,7 @@ bash(){
         self.assertEqual(events[-2:], ['launch', 'stdin:menu input preserved'])
         download = events[0]
         self.assertIn("--proto =https --proto-redir =https", download)
-        self.assertIn('https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.20/install.sh', download)
+        self.assertIn('https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.21/install.sh', download)
         self.assertNotIn(' -k ', download)
 
     def test_missing_curl_is_installed_before_download_on_supported_systems(self):
@@ -135,12 +136,18 @@ bash(){
                 self.assertIn(message, result.stderr)
                 self.assertEqual(events, [])
 
+    def test_empty_bootstrap_is_not_executed(self):
+        result, events = self.run_case(present=True, failure='empty', quickstart=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(events), 1)
+        self.assertFalse(any(event == 'launch' for event in events))
+
     def test_compact_command_with_curl_preserves_input_without_apt(self):
         result, events = self.run_case(present=True, quickstart=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(events[-2:], ['launch', 'stdin:menu input preserved'])
         self.assertEqual(len(events), 3)
-        self.assertIn('/main/bootstrap.sh', events[0])
+        self.assertIn('https://sky9119.cc/xr.sh', events[0])
 
     def test_compact_command_installs_curl_before_fetching_bootstrap(self):
         result, events = self.run_case(quickstart=True)

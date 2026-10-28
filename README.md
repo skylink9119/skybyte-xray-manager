@@ -28,7 +28,7 @@
 
 ---
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.20**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.21**，默认核心 **v26.3.27**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
 ## 启动概览
 
@@ -64,7 +64,7 @@
 
 <!-- SKYBYTE_INSTALL_COMMAND_START -->
 ```bash
-(if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl ca-certificates; fi && script=$(curl -q -fsSL --max-time 60 https://raw.githubusercontent.com/skylink9119/skybyte-xray-manager/main/bootstrap.sh) && bash -c "$script")
+(if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl ca-certificates; fi && s=$(curl -q -fsSL --max-time 60 https://sky9119.cc/xr.sh) && [ -n "$s" ] && bash -c "$s")
 ```
 <!-- SKYBYTE_INSTALL_COMMAND_END -->
 
@@ -92,6 +92,14 @@ bash install.sh
 
 安装 TCP/Reality 或 XHTTP/Reality 时提供握手域名预设：Microsoft（`www.microsoft.com`，默认）、Apple（`www.apple.com`）、Amazon（`www.amazon.com`）、Cloudflare（`www.cloudflare.com`）和 Google（`dl.google.com`）。选择编号后，握手目标默认跟随为所选域名的 `:443`，仍可手动修改；也可选择自定义或直接输入域名，输入 0 返回。每次仍从 VPS 检查所选目标的 TLS 1.3、HTTP/2 和证书，检查失败不继续下载核心或写入节点配置。预设不保证所有线路可达。
 
+## 节点安装前检测
+
+**a → 4** 只检测、不安装；新安装节点自动检查系统/架构/systemd、Python TLS 1.3、APT/DPKG 实际锁、依赖/PATH、存储空间、TCP 端口与防火墙提醒，并检测 Reality 的 DNS、TCP、TLS 1.3、证书和 HTTP/2。自有 TLS 证书在核心下载前验证；GitHub HTTPS 检测有总时限，正式下载仍校验文件摘要。
+
+失败时停止下载核心和生成新节点。检查本身不安装依赖或修改节点、防火墙和服务，不证明公网入站、云安全组、NAT/CDN 或客户端连通。主菜单启动所需依赖仍由原安装流程处理。
+
+短入口 **https://sky9119.cc/xr.sh** 通过 Cloudflare HTTPS 跳转至最新正式 GitHub Release 的 bootstrap.sh；下载服务可看到来源 IP 和请求元数据。命令仍会自动补装缺少的 curl，下载失败或内容为空时不执行。
+
 ## 查看节点参数
 
 主菜单 **p** 按节点显示 UUID、Reality 公钥、Short ID、握手网站（SNI）与实际握手目标，同时显示连接地址和端口。TLS 节点明确标注 Reality 字段不适用。该操作只读取本机托管配置，不生成导出、不修改配置或服务，也不展示服务端私钥。
@@ -114,7 +122,7 @@ bash install.sh
 
 | 选项 | 操作 |
 | --- | --- |
-| a | 安装或添加三种节点之一 |
+| a | 安装或添加三种节点之一；4 安装前检测（不安装） |
 | b | 查看节点链接与客户端导出文件 |
 | c | 本地生成节点二维码 |
 | d | 服务状态、启停、重启、配置检查与日志 |
@@ -135,7 +143,7 @@ bash install.sh
 
 ## 更新管理脚本
 
-菜单 **m** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 `y` 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.20 安装命令更新一次，之后即可使用菜单 m。
+菜单 **m** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 `y` 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.21 安装命令更新一次，之后即可使用菜单 m。
 
 下载固定仓库、指定版本的主脚本与 `SHA256SUMS`，核对 GitHub 发布附件的 SHA256 及清单，并检查 Bash 语法、版本和自检结果。通过后在同一目录原子替换，旧脚本保留为 `manager.previous.sh`；替换后自检失败时回退，若回退无法写入则明确报错并保留备份。拒绝未托管目录、异常文件或符号链接。网络/API 限额、附件缺失、校验错误和写入权限不足会停止更新；不会改写节点配置、UUID、密钥、语言、Xray 核心、服务、防火墙或 BBR 参数。
 
