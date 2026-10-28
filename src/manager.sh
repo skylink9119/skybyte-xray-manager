@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.20
+VERSION=0.1.21
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -230,12 +230,57 @@ choose_reality_sni(){
   return 0
  done
 }
+install_check_engine(){ python3 - "$@" <<'PY_INSTALL_CHECKS'
+# BUILD_PREFLIGHT
+PY_INSTALL_CHECKS
+}
+install_environment_check(){
+ local options=(--project xray --language "$LANGUAGE" --phase environment)
+ [[ ${1:-vision} == xhttp-tls ]] || options+=(--reality)
+ install_check_engine "${options[@]}" --paths "$SKYBYTE_XRAY_DIR" "$SKYBYTE_XRAY_LIB" "${TMPDIR:-/tmp}"
+}
+install_port_check(){
+ install_check_engine --project xray --language "$LANGUAGE" --phase ports --listen "$2" --tcp-port "$1"
+}
+install_download_check(){
+ local options=(--project xray --language "$LANGUAGE" --phase download)
+ [[ ! -x $SKYBYTE_XRAY_BINARY || -L $SKYBYTE_XRAY_BINARY ]] || options+=(--existing-core)
+ install_check_engine "${options[@]}"
+}
+install_reality_target(){
+ helper reality-input --target "$2" --sni "$1" || return 1
+ say '正在检查 Reality 目标的 DNS、TCP、TLS 与证书（总时限 12 秒）……' 'Checking Reality target DNS, TCP, TLS and certificate (12-second deadline)…'
+ if ! reality_engine --project xray --language "$LANGUAGE" --target "$2" --sni "$1";then
+  error 'Reality 握手目标检测未通过；请更换网站或修复 VPS 出站网络、DNS、时间与 CA 证书后重试。尚未写入新节点。' 'Reality target failed checks; change the target or repair VPS egress, DNS, clock and CA roots. No new node was written.'
+  return 1
+ fi
+}
+installation_check_menu(){
+ local choice kind node_port listen sni target
+ if [[ $# == 0 || $1 == --menu ]];then
+  menu '节点安装前检测（不安装）\n1. TCP + Reality + Vision\n2. XHTTP + Reality\n3. XHTTP + TLS（系统/端口/下载检测）\n0. 返回' 'Node installation checks (no installation)\n1. TCP + Reality + Vision\n2. XHTTP + Reality\n3. XHTTP + TLS (system/port/download checks)\n0. Back'
+  [[ ${1:-} != --menu ]] || return 0
+  choice=$(ask '> ' '> ') || return 0
+ else choice=$1;fi
+ case $choice in 1)kind=vision;node_port=443;;2)kind=xhttp-reality;node_port=443;;3)kind=xhttp-tls;node_port=2053;;0)return 0;;*)return 1;;esac
+ local entered
+ entered=$(ask "TCP 端口 [$node_port]：" "TCP port [$node_port]: ") || return 0;node_port=${entered:-$node_port}
+ listen=$(ask '监听：1 IPv4  2 IPv6 [1]：' 'Listen: 1 IPv4  2 IPv6 [1]: ') || return 0
+ case ${listen:-1} in 1)listen=0.0.0.0;;2)listen=::;;*)return 1;;esac
+ install_environment_check "$kind" && install_port_check "$node_port" "$listen" || return 1
+ if [[ $kind != xhttp-tls ]];then
+  sni=$(choose_reality_sni) || return 1;[[ -n $sni ]] || return 0
+  target=$(ask "握手目标 [$sni:443]：" "Handshake target [$sni:443]: ") || return 0;target=${target:-$sni:443}
+  install_reality_target "$sni" "$target" || return 1
+ fi
+ install_download_check
+}
 install_node(){
  local choice kind node_name node_port host sni target listen path='' mode=auto cert='' private_key='' stage
  local flags=()
- menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n0. Back'
+ menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. 节点安装前检测（不安装）\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. Node installation checks (no installation)\n0. Back'
  choice=$(ask '> ' '> ') || return 1
- case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 0) return 0;; *) return 1;; esac
+ case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 4) run_submenu installation_check_menu;return;; 0) return 0;; *) return 1;; esac
  node_name=$(ask '节点名称 [SKYBYTE]：' 'Node name [SKYBYTE]: ') || return 1; node_name=${node_name:-SKYBYTE}-$kind
  node_port=$(ask "监听 TCP 端口 [$node_port]：" "TCP listen port [$node_port]: ") || return 1
  case $kind in vision|xhttp-reality) node_port=${node_port:-443};; *) node_port=${node_port:-2053};; esac
@@ -247,10 +292,12 @@ install_node(){
   warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
  done
  helper preflight --port "$node_port" --listen "$listen" --address "$host" --name "$node_name" --kind "$kind" || return 1
+ install_environment_check "$kind" && install_port_check "$node_port" "$listen" || return 1
  if [[ $kind == xhttp-tls ]]; then
   sni=$(ask '证书域名 / TLS SNI：' 'Certificate domain / TLS SNI: ') || return 1
   cert=$(ask '已有可信 fullchain 证书文件绝对路径：' 'Absolute path to trusted fullchain certificate: ') || return 1
   private_key=$(ask '私钥文件绝对路径（不修改源文件）：' 'Absolute private-key path (source is preserved): ') || return 1
+  helper tls-input --sni "$sni" --cert "$cert" --key "$private_key" || return 1
   local cdn
   cdn=$(ask '通过 CDN 连接？[y/N]：' 'Use a CDN? [y/N]: ') || return 1
   if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
@@ -259,8 +306,7 @@ install_node(){
   sni=$(choose_reality_sni) || return 1
   [[ -n $sni ]] || return 0
   target=$(ask "握手目标 [$sni:443]：" "Handshake target [$sni:443]: ") || return 1; target=${target:-$sni:443}
-  say '检查目标 TLS 1.3 与 HTTP/2……' 'Checking target TLS 1.3 and HTTP/2…'
-  helper probe --target "$target" --sni "$sni" || return 1
+  install_reality_target "$sni" "$target" || return 1
  fi
  if [[ $kind == xhttp-* ]]; then
   path=$(ask 'XHTTP 路径（回车自动生成）：' 'XHTTP path (Enter to generate): ') || return 1
@@ -273,6 +319,7 @@ install_node(){
   say '已取消节点安装，未下载核心或更改节点配置。' 'Node installation cancelled; no core download or node configuration changes.'
   return 0
  fi
+ install_download_check || return 1
  ensure_binary || { error '核心准备失败，具体原因见上方提示。' 'Core preparation failed; see the reason above.'; return 1; }
  flags+=(--kind "$kind" --port "$node_port" --listen "$listen" --address "$host" --sni "$sni" --name "$node_name")
  if [[ $kind == xhttp-tls ]]; then flags+=(--cert "$cert" --key "$private_key")
@@ -464,6 +511,7 @@ guide(){
  say 'CDN 模式需设置 DNS、可代理 HTTPS 端口及严格的回源证书验证；不替你配置 CDN。' 'For CDN, configure DNS, a supported HTTPS port and strict origin verification; CDN setup is manual.'
  say '客户端必须支持对应传输。节点文件是本地导出，不是在线订阅 URL。' 'Clients must support the transport. Exports are local files, not online subscription URLs.'
  say '证书为私密副本，外部续期后用“更新 TLS 证书”刷新；不自动签发或续期。' 'Certificates are private copies. After external renewal use Refresh TLS certificate; issuance/renewal is not automatic.'
+ say '安装前检测：a → 4；检查不代表公网入站可达。短安装入口为 sky9119.cc/xr.sh。' 'Installation checks: a → 4; checks do not prove public inbound access. Short install entry: sky9119.cc/xr.sh.'
  say 'Reality 握手网站检测：主菜单 o，可检查当前节点或自定义目标；不修改配置，不代表公网节点已连通。' 'Reality target checks: main menu o, configured or custom targets; read-only, not a public node connectivity test.'
  say '安装后输入 xr 可重新打开菜单。' 'After installation, run xr to reopen the menu.'
 }

@@ -8,6 +8,10 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 shell = (ROOT / 'src/manager.sh').read_text()
+assert shell.count('# BUILD_PREFLIGHT') == 1
+preflight = (ROOT / 'src/preflight.py').read_text()
+compile(preflight, 'src/preflight.py', 'exec')
+shell = shell.replace('# BUILD_PREFLIGHT', preflight)
 assert shell.count('# BUILD_REALITY') == 1
 reality = (ROOT / 'src/reality.py').read_text()
 compile(reality, 'src/reality.py', 'exec')

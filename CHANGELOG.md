@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.21 — 2026-10-28
+
+- Add a → 4 standalone installation checks and automatic preflight: OS/architecture/systemd, actual APT/DPKG locks, dependencies/PATH, storage, TCP binding, firewall reminders, detailed Reality DNS/TCP/TLS/certificate/HTTP2 checks, and bounded GitHub HTTPS checks. Failures stop before core download or new node generation.
+- Check Reality/TLS inputs before downloading core; retain existing ownership, port and transaction safeguards. Standalone checks do not install dependencies or change firewall, services or node data.
+- Shorten the installation command through sky9119.cc/xr.sh, an HTTPS redirect to the latest stable bootstrap asset; retain missing-curl support, failure/empty-body gating and subsequent digest verification.
+- Add real POSIX-lock/TCP-UDP tests, bounded DNS/HTTPS simulations and failure-before-mutation integration checks.
+
 ## 0.1.20 — 2026-10-28
 
 - Add read-only node parameters in main menu `p`: show UUID, public key, short ID, SNI, target, address and port for each installed node; distinguish TLS nodes without Reality.
