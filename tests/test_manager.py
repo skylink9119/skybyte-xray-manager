@@ -334,6 +334,23 @@ class InstallationInputTests(TemporaryFixture):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.root.exists())
 
+    def test_actual_installer_and_editor_accept_tcp_time_wait(self):
+        with socket.socket() as server:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind(('127.0.0.1', 0)); server.listen()
+            number = server.getsockname()[1]
+            with socket.create_connection(('127.0.0.1', number), timeout=2) as client:
+                peer, _ = server.accept(); peer.close()
+                self.assertEqual(client.recv(1), b'')
+        result = self.cli('--address', 'example.com', '--listen', '127.0.0.1', '--port', str(number))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.root.exists())
+        state = {'schema': 1, 'nodes': {'vision': example_node()}}
+        state['nodes']['vision']['port'] = number - 1
+        edited = core.edit_state(state, 'vision', node_port=number)
+        self.assertEqual(edited['nodes']['vision']['port'], number)
+        self.assertEqual(edited['nodes']['vision']['uuid'], state['nodes']['vision']['uuid'])
+
     def test_empty_destination_preflight_does_not_create_owner_marker(self):
         self.root.mkdir()
         result = self.cli('--kind', 'vision', '--address', 'example.com', '--listen', '127.0.0.1', '--port', str(free_port()))
@@ -685,6 +702,21 @@ class EngineTests(TemporaryFixture):
         self.assertEqual(self.private_key.read_bytes(),before)
         node=core.load_state(self.root)['nodes']['xhttp-tls']
         self.assertEqual((self.root/node['key']).stat().st_mode & 0o777,0o600)
+
+    def test_encrypted_key_fails_without_interactive_password_prompt(self):
+        encrypted = self.base / 'encrypted.key'
+        subprocess.run(['openssl', 'pkey', '-in', str(self.private_key), '-aes-256-cbc',
+                        '-passout', 'pass:test-fixture-only', '-out', str(encrypted)],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        original = encrypted.read_bytes()
+        result = subprocess.run([os.environ.get('PYTHON_BIN', 'python3'), str(PROJECT / 'src/core.py'),
+                                 'tls-input', '--sni', 'localhost', '--cert', str(self.cert), '--key', str(encrypted)],
+                                input='', capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Encrypted private keys are not supported', result.stderr)
+        self.assertNotIn('Enter PEM', result.stderr)
+        self.assertEqual(encrypted.read_bytes(), original)
+        self.assertFalse(self.root.exists())
 
     def test_backup_restore_preserves_uuid_keys_and_exports(self):
         for kind in core.KINDS: self.make_protocol(kind)

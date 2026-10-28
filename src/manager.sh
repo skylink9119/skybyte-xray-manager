@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.22
+VERSION=0.1.23
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -46,9 +46,19 @@ LOGO
  printf '               SKYBYTE Xray Manager v%s\n                Reality · Vision · XHTTP\n' "$VERSION"
  printf '============================================================%s\n' "$RESET"
 }
+OVERVIEW_CACHE=''
+OVERVIEW_CACHE_AT=-10
+OVERVIEW_CACHE_LANGUAGE=''
 show_startup_info(){
+ if [[ $OVERVIEW_CACHE_LANGUAGE != "$LANGUAGE" ]] || (( SECONDS - OVERVIEW_CACHE_AT >= 5 )); then
+  if ! OVERVIEW_CACHE=$(helper overview --language "$LANGUAGE"); then
+   OVERVIEW_CACHE=$(say '状态概览暂不可用，可通过菜单 d 或 l 查看详情。' 'Overview unavailable; use menu d or l for details.')
+  fi
+  OVERVIEW_CACHE_AT=$SECONDS
+  OVERVIEW_CACHE_LANGUAGE=$LANGUAGE
+ fi
  separator
- helper overview --language "$LANGUAGE" || warn '状态概览暂不可用，可通过菜单 d 或 l 查看详情。' 'Overview unavailable; use menu d or l for details.'
+ printf '%s\n' "$OVERVIEW_CACHE"
  separator
 }
 
@@ -889,6 +899,8 @@ main_menu(){
   menu 'a. 安装 / 添加节点\nb. 查看节点与客户端配置\nc. 节点二维码\nd. 服务与日志\ne. 编辑节点 / 删除 / TLS 证书\nf. 更新 Xray 核心\ng. 备份配置\nh. 恢复配置\ni. 使用说明\nj. 切换语言\nk. 卸载\nl. 防火墙 / BBR\nm. 更新管理脚本\nn. WARP 分流 / 平台检测\no. Reality 握手网站检测\np. 查看节点参数（注意保密）\nq. 退出' 'a. Install / add nodes\nb. Nodes and client configs\nc. Node QR codes\nd. Service and logs\ne. Edit nodes / remove / TLS certificate\nf. Update Xray-core\ng. Back up configuration\nh. Restore configuration\ni. Guide\nj. Language\nk. Uninstall\nl. Firewall / BBR\nm. Update manager script\nn. WARP routing / platform tests\no. Reality handshake target checks\np. View node parameters (keep private)\nq. Exit'
   local choice
   choice=$(ask '请选择（字母）：' 'Choose (letter): ') || return 0
+  # Read-only views reuse a brief in-memory snapshot; management actions refresh it.
+  case $choice in a|A|1|d|D|4|e|E|5|f|F|6|h|H|8|j|J|10|k|K|11|l|L|12|m|M|13|n|N|14|o|O|15) OVERVIEW_CACHE_AT=-10;; esac
   case $choice in
    a|A|1) install_node || error '操作未完成或已取消；失败原因见上方提示。' 'Operation did not complete or was cancelled; see the reason above.';;
    b|B|2) show_nodes;; c|C|3) qr_nodes || true;; d|D|4) run_submenu service_menu;; e|E|5) run_submenu edit_nodes;;
