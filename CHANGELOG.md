@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.22 — 2026-10-28
+
+- Match core TCP bind behavior in preflight using SO_REUSEADDR, so a recently stopped service in TIME_WAIT does not falsely block installation. Active TCP listeners are still rejected; UDP checks remain exclusive.
+- Add an actual local TCP close/rebind regression alongside the occupied TCP/available UDP checks.
+
 ## 0.1.21 — 2026-10-28
 
 - Add a → 4 standalone installation checks and automatic preflight: OS/architecture/systemd, actual APT/DPKG locks, dependencies/PATH, storage, TCP binding, firewall reminders, detailed Reality DNS/TCP/TLS/certificate/HTTP2 checks, and bounded GitHub HTTPS checks. Failures stop before core download or new node generation.

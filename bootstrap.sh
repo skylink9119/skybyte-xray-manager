@@ -18,7 +18,7 @@
  fi
  staging=$(mktemp -d "${TMPDIR:-/tmp}/skybyte-xray-bootstrap.XXXXXX")
  trap 'rm -rf -- "$staging"' EXIT
- curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 2 --connect-timeout 10 --max-time 120 'https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.21/install.sh' -o "$staging/install.sh"
+ curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 2 --connect-timeout 10 --max-time 120 'https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.22/install.sh' -o "$staging/install.sh"
  bash -n "$staging/install.sh"
  bash "$staging/install.sh"
 )

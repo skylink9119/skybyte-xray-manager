@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.21
+VERSION=0.1.22
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -85,7 +85,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.21"
+VERSION = "0.1.22"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -2143,6 +2143,9 @@ def ports(report, listen, tcp=None, udp=None):
         label = protocol + ' ' + str(number)
         try:
             with socket.socket(family, kind) as sock:
+                if kind == socket.SOCK_STREAM:
+                    # Match server binds: TCP TIME_WAIT is reusable, active listeners are not.
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 if family == socket.AF_INET6:
                     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
                 sock.bind((listen, number))
