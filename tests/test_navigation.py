@@ -89,3 +89,18 @@ main_menu''', 'O\n1\n2\ntarget.example:8443\nsni.example\n2\n0\n0\nq\n', languag
             code=action+'(){ echo ACTION_'+action+';return '+('2' if letter=='m' else '0')+'; };main_menu'
             result=self.shell(code,letter.upper()+'\nq\n')
             self.assertIn('ACTION_'+action,result.stdout)
+
+    def test_failed_node_read_stays_in_menu_without_claiming_export_success(self):
+        result=self.shell('''touch "$SKYBYTE_XRAY_DIR/state.json"
+helper(){ echo READ_FAILED >&2;return 1; }
+main_menu''','b\nq\n')
+        self.assertIn('READ_FAILED',result.stderr)
+        self.assertIn('无法读取节点',result.stderr)
+        self.assertNotIn('subscription-base64.txt',result.stdout)
+        self.assertEqual(result.stdout.count('OVERVIEW'),2)
+
+    def test_invalid_edit_choice_does_not_consume_a_protocol_selection(self):
+        result=self.shell('main_menu','e\n999\n0\nq\n')
+        self.assertNotIn('1. Vision',result.stdout+result.stderr)
+        self.assertIn('选项无效',result.stderr)
+        self.assertEqual(result.stdout.count('OVERVIEW'),2)

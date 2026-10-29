@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.23
+VERSION=0.1.24
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -96,7 +96,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.23"
+VERSION = "0.1.24"
 CORE_VERSION = "v26.3.27"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -2381,13 +2381,14 @@ show_parameters(){
 }
 show_nodes(){
  [[ -f $SKYBYTE_XRAY_DIR/state.json ]] || { warn '尚未安装节点。' 'No nodes installed.'; return 0; }
- local line index=0
+ local line nodes index=0
+ nodes=$(helper show) || return 1
  warn '节点链接包含凭据，请勿公开。' 'Node links contain credentials; keep them private.'
  while IFS= read -r line; do
   if (( index % 2 == 0 )); then separator; printf '%s%s%s\n' "$YELLOW" "$line" "$RESET"
   else printf '%s%s%s\n' "$RED" "$line" "$RESET"; fi
   index=$((index + 1))
- done < <(helper show)
+ done <<< "$nodes"
  separator
  warn "文件：$SKYBYTE_XRAY_DIR/nodes.txt、subscription-base64.txt、client-*.json" "Files: $SKYBYTE_XRAY_DIR/nodes.txt, subscription-base64.txt, client-*.json"
 }
@@ -2402,7 +2403,13 @@ qr_nodes(){
  warn 'XHTTP 扫码需要客户端本身支持 XHTTP；二维码不改变兼容性。' 'XHTTP QR import requires an XHTTP-capable client.'
 }
 choose_kind(){
- menu '1 Vision  2 XHTTP-Reality  3 XHTTP-TLS  0 返回' '1 Vision  2 XHTTP-Reality  3 XHTTP-TLS  0 Back' >&2
+ menu '1. Vision
+2. XHTTP-Reality
+3. XHTTP-TLS
+0. 返回' '1. Vision
+2. XHTTP-Reality
+3. XHTTP-TLS
+0. Back' >&2
  local choice
  choice=$(ask '> ' '> ') || return 1
  case $choice in 1) printf 'vision';; 2) printf 'xhttp-reality';; 3) printf 'xhttp-tls';; *) return 1;; esac
@@ -2412,14 +2419,23 @@ edit_nodes(){
  local flags=()
  # --menu renders only; a numeric argument executes one selected operation.
  if [[ $# == 0 || $1 == --menu ]]; then
- menu '1 重命名  2 删除协议  3 更新 TLS 证书  4 修改地址/端口/路径  0 返回' '1 Rename  2 Remove protocol  3 Refresh TLS certificate  4 Edit address/port/path  0 Back'
+ menu '1. 重命名
+2. 删除协议
+3. 更新 TLS 证书
+4. 修改地址/端口/路径
+0. 返回' '1. Rename
+2. Remove protocol
+3. Refresh TLS certificate
+4. Edit address/port/path
+0. Back'
  [[ ${1:-} != --menu ]] || return 0
  choice=$(ask '> ' '> ') || return 1
  else
   choice=$1
  fi
  [[ $choice != 0 ]] || return 0
- kind=$(choose_kind) || return 1
+ case $choice in 1|2|3|4) :;; *) error '选项无效。' 'Invalid option.';return 1;; esac
+ kind=$(choose_kind) || return 0
  case $choice in
   1) value=$(ask '新的节点名称：' 'New node name: ') || return 1; stage=$(helper rename --kind "$kind" --name "$value") || return 1;;
   2) confirm '删除该协议？重新安装会生成新凭据。' 'Remove protocol? Reinstallation generates new credentials.' || return 1
@@ -2451,7 +2467,19 @@ service_menu(){
  helper guard || return 1
  # --menu renders only; a numeric argument executes one selected operation.
  if [[ $# == 0 || $1 == --menu ]]; then
- menu '1 状态  2 启动  3 停止  4 重启  5 配置检查  6 日志  0 返回' '1 Status  2 Start  3 Stop  4 Restart  5 Validate  6 Logs  0 Back'
+ menu '1. 状态
+2. 启动
+3. 停止
+4. 重启
+5. 配置检查
+6. 日志
+0. 返回' '1. Status
+2. Start
+3. Stop
+4. Restart
+5. Validate
+6. Logs
+0. Back'
  local choice
  [[ ${1:-} != --menu ]] || return 0
  choice=$(ask '> ' '> ') || return 1
@@ -2559,7 +2587,7 @@ guide(){
  say '客户端必须支持对应传输。节点文件是本地导出，不是在线订阅 URL。' 'Clients must support the transport. Exports are local files, not online subscription URLs.'
  say '证书为私密副本，外部续期后用“更新 TLS 证书”刷新；不自动签发或续期。' 'Certificates are private copies. After external renewal use Refresh TLS certificate; issuance/renewal is not automatic.'
  say '安装前检测：a → 4；检查不代表公网入站可达。短安装入口为 sky9119.cc/xr.sh。' 'Installation checks: a → 4; checks do not prove public inbound access. Short install entry: sky9119.cc/xr.sh.'
- say 'Reality 握手网站检测：主菜单 o，可检查当前节点或自定义目标；不修改配置，不代表公网节点已连通。' 'Reality target checks: main menu o, configured or custom targets; read-only, not a public node connectivity test.'
+ say 'Reality 握手网站检测：主菜单 o，可检查当前节点或自定义目标，也可在检测通过后确认更换；检测通过不代表公网节点已连通。' 'Reality target checks: main menu o, check configured/custom targets or confirm a replacement after checks pass; checks do not prove public node connectivity.'
  say '安装后输入 xr 可重新打开菜单。' 'After installation, run xr to reopen the menu.'
 }
 firewall_open(){
@@ -3412,14 +3440,62 @@ main_menu(){
   show_startup_info
   printf '%sYouTube: https://www.youtube.com/@SKYBYTE9119%s\n' "$CYAN" "$RESET"
   say '觉得脚本好用，欢迎订阅我的 YouTube 频道，支持后续维护。' 'If this script helps, subscribe to my YouTube channel to support maintenance.'
-  menu 'a. 安装 / 添加节点\nb. 查看节点与客户端配置\nc. 节点二维码\nd. 服务与日志\ne. 编辑节点 / 删除 / TLS 证书\nf. 更新 Xray 核心\ng. 备份配置\nh. 恢复配置\ni. 使用说明\nj. 切换语言\nk. 卸载\nl. 防火墙 / BBR\nm. 更新管理脚本\nn. WARP 分流 / 平台检测\no. Reality 握手网站检测\np. 查看节点参数（注意保密）\nq. 退出' 'a. Install / add nodes\nb. Nodes and client configs\nc. Node QR codes\nd. Service and logs\ne. Edit nodes / remove / TLS certificate\nf. Update Xray-core\ng. Back up configuration\nh. Restore configuration\ni. Guide\nj. Language\nk. Uninstall\nl. Firewall / BBR\nm. Update manager script\nn. WARP routing / platform tests\no. Reality handshake target checks\np. View node parameters (keep private)\nq. Exit'
+  menu '【节点】
+a. 安装 / 添加节点
+b. 查看节点与客户端配置
+c. 节点二维码
+e. 编辑节点 / 删除 / TLS 证书
+p. 查看节点参数（注意保密）
+
+【服务与网络】
+d. 服务与日志
+l. 防火墙 / BBR
+n. WARP 分流 / 平台检测
+o. Reality 握手网站检测
+
+【更新与备份】
+f. 更新 Xray 核心
+m. 更新管理脚本
+g. 备份配置
+h. 恢复配置
+
+【设置】
+i. 使用说明
+j. 切换语言
+k. 卸载
+
+q. 退出' '[Nodes]
+a. Install / add nodes
+b. Nodes and client configs
+c. Node QR codes
+e. Edit nodes / remove / TLS certificate
+p. View node parameters (keep private)
+
+[Services and network]
+d. Service and logs
+l. Firewall / BBR
+n. WARP routing / platform tests
+o. Reality handshake target checks
+
+[Updates and backups]
+f. Update Xray-core
+m. Update manager script
+g. Back up configuration
+h. Restore configuration
+
+[Settings]
+i. Guide
+j. Language
+k. Uninstall
+
+q. Exit'
   local choice
   choice=$(ask '请选择（字母）：' 'Choose (letter): ') || return 0
   # Read-only views reuse a brief in-memory snapshot; management actions refresh it.
   case $choice in a|A|1|d|D|4|e|E|5|f|F|6|h|H|8|j|J|10|k|K|11|l|L|12|m|M|13|n|N|14|o|O|15) OVERVIEW_CACHE_AT=-10;; esac
   case $choice in
    a|A|1) install_node || error '操作未完成或已取消；失败原因见上方提示。' 'Operation did not complete or was cancelled; see the reason above.';;
-   b|B|2) show_nodes;; c|C|3) qr_nodes || true;; d|D|4) run_submenu service_menu;; e|E|5) run_submenu edit_nodes;;
+   b|B|2) show_nodes || error '无法读取节点，配置和导出文件未修改；请检查上方提示。' 'Cannot read nodes; configuration and exports are unchanged. Inspect the output above.';; c|C|3) qr_nodes || true;; d|D|4) run_submenu service_menu;; e|E|5) run_submenu edit_nodes;;
    f|F|6) update_core || error '核心更新失败，已保留或回退原核心。' 'Core update failed; previous core retained or restored.';;
    g|G|7) make_backup || true;; h|H|8) restore_backup || error '恢复失败，原配置已保留或回退。' 'Restore failed; previous configuration retained or restored.';;
    i|I|9) guide;; j|J|10) choose_language || true;; k|K|11) uninstall || error '卸载未完成。' 'Uninstall did not complete.';;
