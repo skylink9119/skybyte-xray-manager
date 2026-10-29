@@ -28,13 +28,25 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.24**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.25**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
-v0.1.24 groups the main menu by purpose and displays submenu options on separate lines without changing keys. Empty/malformed installer downloads stop before execution. Failed node reads now report failure and keep the menu open; invalid edit choices no longer prompt for a protocol. See the [audit record](docs/REVIEW.md).
+v0.1.25 replaces WARP media comparison with verified UnlockTests and adds professional media/return-route/speed diagnostics at n → 6. See the [audit record](docs/REVIEW.md).
 
 ## Startup overview
 
 The main menu shows OS, architecture, kernel, CPU, memory/swap, root-disk use, uptime and load; actual Xray version, service and boot state, installed protocols/ports, current BBR and configured WARP routing. Related components include the official WARP client, UFW, firewalld, Fail2ban and QR utility, with installation and runtime states distinguished. Probes are local and read-only. Service, version and UFW queries run concurrently with a two-second timeout each. Read-only menu returns reuse an in-memory snapshot for up to five seconds; management actions and language changes refresh it immediately. No additional background service. Missing probes do not block the menu. No credentials are displayed; configured routing is not proof of connectivity.
+
+## Professional media, routes and speed tests
+
+Open **n → 6**. [UnlockTests](https://github.com/oneclickvirt/UnlockTests) (Apache-2.0), the specialized media engine used by goecs, replaces the old page parser. Default coverage is global platforms plus AI, including Netflix, Disney+, YouTube Premium, TikTok, Spotify, ChatGPT and Gemini; all-region tests are available. Choose VPS direct IPv4/IPv6/both, WARP, or direct/WARP comparison. Preserve upstream status, region, unlock type and errors rather than interpreting HTTP 200 as unlocking.
+
+[goecs](https://github.com/oneclickvirt/ecs) (GPL-3.0) provides optional return-route, speed and combined network tests. Route-only tests disable speed; bandwidth-consuming tests require `y`. CPU, memory and disk stress tests, automatic result uploads and tool logging are disabled. Upstream China return-route modules require Chinese mode, including from the English menu.
+
+Official release metadata, URLs and SHA256 are verified on demand; cached assets are rehashed and only the current asset is retained. Latest stable releases are checked when running diagnostics, never while opening the main menu. Errors, timeouts or changed JSON schemas stop with an incomplete result; process groups and temporary files are cleaned up. No resident process is added.
+
+Media JSON reports are private mode 600 at `/etc/skybyte-xray/reports/diagnostic-*.json`, recording provenance/digest, path, provider results and incomplete reasons, without raw pages or node credentials. Third-party probes contact platforms, DNS/region services and route/IP-data services, which see the egress IP. Uploads are disabled; external diagnostic requests still occur. Tools use temporary working/home directories, sanitized environments and an explicit loopback SOCKS5 proxy for WARP.
+
+Proxy egress address families are selected by the proxy; DNS-based native/proxy classification can consult system DNS. A VPS egress test does not establish client routing, account eligibility, residential-IP status or playback. Return routes describe the VPS-to-probe path at test time, not every subscriber route.
 
 ## WARP routing and platform tests
 
@@ -44,7 +56,7 @@ Choose Netflix, Disney+, ChatGPT, Gemini, all four, or custom domain suffixes. B
 
 Candidate validation, rollback and existing backups cover routing alongside nodes. Credentials and prior service activity are preserved; failed restarts restore configuration. Restored WARP routing requires the corresponding local proxy. Disabling routing/removing the manager retains the WARP package, registration, connection and repository; other projects are untouched.
 
-Option **5** compares anonymous Netflix, Disney+, ChatGPT and Gemini responses through direct IPv4 and WARP. Page access and a successful trace do not prove playback, catalog coverage or account access. No third-party scripts or login credentials are used. Private reports contain classifications/status only in `reports/`, mode 600. See [WARP local proxy mode](https://developers.cloudflare.com/warp-client/warp-modes/) and [Xray SOCKS outbound](https://xtls.github.io/en/config/outbounds/socks.html).
+Option **5** compares direct IPv4 and WARP using UnlockTests global and AI coverage; option **6** opens professional media, route and speed diagnostics. See the section above for provenance, private reports and limitations.
 
 ## Nodes
 
@@ -141,7 +153,7 @@ The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality
 
 ## Manager self-update
 
-Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.24 installer once to obtain this menu.
+Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.25 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 

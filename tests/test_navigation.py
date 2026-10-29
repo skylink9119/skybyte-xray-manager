@@ -104,3 +104,10 @@ main_menu''','b\nq\n')
         self.assertNotIn('1. Vision',result.stdout+result.stderr)
         self.assertIn('选项无效',result.stderr)
         self.assertEqual(result.stdout.count('OVERVIEW'),2)
+
+    def test_professional_diagnostics_nested_menu_and_speed_cancel(self):
+        result=self.shell('''media_engine(){ echo "DIAGNOSTIC $*"; }
+main_menu''','n\n6\n8\nn\n1\n0\n0\nq\n')
+        self.assertIn('DIAGNOSTIC 4',result.stdout)
+        self.assertNotIn('DIAGNOSTIC speed',result.stdout)
+        self.assertEqual(result.stdout.count('OVERVIEW'),2)
