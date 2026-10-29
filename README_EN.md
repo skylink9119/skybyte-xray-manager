@@ -28,15 +28,15 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.27**, pinned core **v26.10.29**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.28**, pinned core **v26.10.29**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
-v0.1.27 adds IPv6 backup entries while preserving IPv4 nodes and credentials, and pins official Xray-core v26.10.29.
+v0.1.28 adds IPv6 backup entries while preserving IPv4 nodes and credentials, and pins official Xray-core v26.10.29.
 
 ## IPv6 backup entry and core update
 
 Open **l → 9**: `1` status, `2` detect and enable, `3` remove backup. Existing public direct Vision, XHTTP+Reality and XHTTP+TLS nodes gain dual-stack listeners and additional IPv6 backup links. CDN nodes are unchanged; loopback origins are never automatically exposed. Original IPv4 addresses, UUIDs, keys, Short IDs, ports, paths and SNI are retained. Subscriptions append IPv6 links; `client-PROTOCOL-ipv6.json` provides backup client configs. Failed configuration/service updates roll back; stopped services remain stopped.
 
-Requires native public IPv6 and a usable route on the VPS, plus client IPv6. No default-route changes or firewall disable. Active UFW must manage IPv6; allow actual IPv6 TCP ports in your provider firewall. Local checks do not prove public connectivity, and IPv6 can also be restricted. Exports remain private on the VPS; install a firewall and protect credentials.
+WARP/WireGuard and TUN tunnel interfaces are excluded: an egress address is not a public ingress address. Requires native public IPv6 and a usable route on the VPS, plus client IPv6. No default-route changes or firewall disable. Active UFW must manage IPv6; allow actual IPv6 TCP ports in your provider firewall. Local checks do not prove public connectivity, and IPv6 can also be restricted. Exports remain private on the VPS; install a firewall and protect credentials.
 
 The default official core is [v26.10.29](https://github.com/XTLS/Xray-core/releases/tag/v26.10.29). Update the manager with **m**. Existing binaries are not silently replaced by a manager update: use **f** and accept the v26.10.29 default to update the core. Official Freedom private/reserved-address protections are retained; no private-target exceptions are added to production configs.
 
@@ -163,7 +163,7 @@ The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality
 
 ## Manager self-update
 
-Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.27 installer once to obtain this menu.
+Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.28 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 

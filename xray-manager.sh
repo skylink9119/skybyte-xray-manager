@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.27
+VERSION=0.1.28
 CORE_VERSION=v26.10.29
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -100,11 +100,16 @@ def public_ipv6(value):
 
 
 def ipv6_candidates():
-    result = subprocess.run(['ip', '-j', '-6', 'addr', 'show', 'scope', 'global'],
+    result = subprocess.run(['ip', '-j', '-d', '-6', 'addr', 'show', 'scope', 'global'],
                             capture_output=True, text=True, check=True, timeout=4)
     candidates = []
     for interface in json.loads(result.stdout):
         if 'UP' not in interface.get('flags', []):
+            continue
+        # WARP/WireGuard/TUN egress addresses do not provide public ingress.
+        # Detailed link metadata avoids treating those addresses as native VPS IPs.
+        kind = interface.get('linkinfo', {}).get('info_kind', '')
+        if kind in {'wireguard', 'tun', 'tap', 'sit', 'ip6tnl', 'ipip', 'gre', 'gretap', 'ip6gre', 'ip6gretap', 'vti', 'vti6'} or interface.get('link_type') in {'none', 'sit', 'ip6tnl', 'ipip', 'gre', 'tunnel6'}:
             continue
         for item in interface.get('addr_info', []):
             if item.get('family') != 'inet6' or item.get('scope') != 'global':
@@ -315,7 +320,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.27"
+VERSION = "0.1.28"
 CORE_VERSION = "v26.10.29"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"

@@ -99,7 +99,7 @@ bash(){
         self.assertEqual(events[-2:], ['launch', 'stdin:menu input preserved'])
         download = events[0]
         self.assertIn("--proto =https --proto-redir =https", download)
-        self.assertIn('https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.27/install.sh', download)
+        self.assertIn('https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.28/install.sh', download)
         self.assertNotIn(' -k ', download)
 
     def test_missing_curl_is_installed_before_download_on_supported_systems(self):
