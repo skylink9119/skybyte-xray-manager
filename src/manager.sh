@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.26
-CORE_VERSION=v26.3.27
+VERSION=0.1.27
+CORE_VERSION=v26.10.29
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
 SKYBYTE_XRAY_BINARY=${SKYBYTE_XRAY_BINARY:-$SKYBYTE_XRAY_LIB/xray}
@@ -75,6 +75,7 @@ show_startup_info(){
  separator
 }
 
+# BUILD_IPV6
 # BUILD_HELPER
 
 environment_check(){
@@ -184,7 +185,7 @@ recover(){
  fi
 }
 apply_stage() (
- local stage=$1 activate=${2:-no} was_active=no was_enabled=no applied=0 accepted=0
+ local stage=$1 activate=${2:-no} readiness=${3:-no} was_active=no was_enabled=no applied=0 accepted=0
  local flags=(--stage "$stage")
  systemctl is-active --quiet skybyte-xray.service && was_active=yes
  systemctl is-enabled --quiet skybyte-xray.service && was_enabled=yes
@@ -222,6 +223,7 @@ PY
    if systemctl is-active --quiet skybyte-xray.service; then running=1; break; fi
   done
   (( running )) || return 1
+  [[ $readiness != ipv6 ]] || ipv6_engine ready || return 1
  fi
  helper finalize --stage "$stage" || return 1
  accepted=1
@@ -288,7 +290,7 @@ installation_check_menu(){
  case $choice in 1)kind=vision;node_port=443;;2)kind=xhttp-reality;node_port=443;;3)kind=xhttp-tls;node_port=2053;;0)return 0;;*)return 1;;esac
  local entered
  entered=$(ask "TCP 端口 [$node_port]：" "TCP port [$node_port]: ") || return 0;node_port=${entered:-$node_port}
- listen=$(ask '监听：1 IPv4  2 IPv6 [1]：' 'Listen: 1 IPv4  2 IPv6 [1]: ') || return 0
+ listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 0
  case ${listen:-1} in 1)listen=0.0.0.0;;2)listen=::;;*)return 1;;esac
  install_environment_check "$kind" && install_port_check "$node_port" "$listen" || return 1
  if [[ $kind != xhttp-tls ]];then
@@ -307,7 +309,7 @@ install_node(){
  node_name=$(ask '节点名称 [SKYBYTE]：' 'Node name [SKYBYTE]: ') || return 1; node_name=${node_name:-SKYBYTE}-$kind
  node_port=$(ask "监听 TCP 端口 [$node_port]：" "TCP listen port [$node_port]: ") || return 1
  case $kind in vision|xhttp-reality) node_port=${node_port:-443};; *) node_port=${node_port:-2053};; esac
- listen=$(ask '监听：1 IPv4  2 IPv6 [1]：' 'Listen: 1 IPv4  2 IPv6 [1]: ') || return 1
+ listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 1
  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
  while :; do
   host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
@@ -535,6 +537,7 @@ state=json.loads(state_file.read_text()) if state_file.exists() else {'nodes':{}
 paths=[root/x for x in ['state.json','config.json','nodes.txt','subscription-base64.txt','language']] if state_file.exists() else []
 for kind,node in state['nodes'].items():
  paths.append(root/('client-'+kind+'.json'))
+ if 'ipv6_backup' in node:paths.append(root/('client-'+kind+'-ipv6.json'))
  if kind=='xhttp-tls': paths.extend([root/node['cert'],root/node['key']])
 paths.extend([unit,lib/'xray'])
 if any(p.is_symlink() or (p.exists() and not p.is_file()) for p in paths): raise SystemExit('Unsafe managed file')
@@ -691,7 +694,7 @@ network_menu(){
  local choice value
  # --menu renders only; a numeric argument executes one selected operation.
  if [[ $# == 0 || $1 == --menu ]]; then
- menu '防火墙\n1 查看防火墙状态\n2 安装并启用 UFW\n3 放行全部节点 TCP 端口\n4 放行指定 TCP 端口\n5 停用/卸载 UFW\n\nBBR\n6 查看 BBR 状态\n7 启用 BBR + fq\n8 恢复启用前参数\n\n0 返回' 'Firewall\n1 Show firewall status\n2 Install and enable UFW\n3 Allow all node TCP ports\n4 Allow a TCP port\n5 Disable/remove UFW\n\nBBR\n6 Show BBR status\n7 Enable BBR + fq\n8 Restore previous settings\n\n0 Back'
+ menu '防火墙\n1 查看防火墙状态\n2 安装并启用 UFW\n3 放行全部节点 TCP 端口\n4 放行指定 TCP 端口\n5 停用/卸载 UFW\n\nBBR\n6 查看 BBR 状态\n7 启用 BBR + fq\n8 恢复启用前参数\n\nIPv6 备用入口\n9 IPv6 状态 / 启用 / 移除备用入口\n\n0 返回' 'Firewall\n1 Show firewall status\n2 Install and enable UFW\n3 Allow all node TCP ports\n4 Allow a TCP port\n5 Disable/remove UFW\n\nBBR\n6 Show BBR status\n7 Enable BBR + fq\n8 Restore previous settings\n\nIPv6 backup entry\n9 IPv6 status / enable / remove backup entry\n\n0 Back'
  [[ ${1:-} != --menu ]] || return 0
  choice=$(ask '> ' '> ') || return 1
  else
@@ -978,6 +981,7 @@ run_submenu(){
   say '操作后留在此菜单；0 返回上一层。' 'Stay in this menu after each operation; 0 returns one level.'
   choice=$(ask '> ' '> ') || return 0
   [[ $choice != 0 ]] || return 0
+  if [[ $handler == network_menu && $choice == 9 ]];then run_submenu ipv6_menu;continue;fi
   if [[ $handler == warp_menu && $choice == 6 ]];then run_submenu media_check;continue;fi
   if ! ( "$handler" "$choice" ); then
    error '操作未完成或已取消；可在当前菜单继续选择。' 'Operation incomplete or cancelled; choose again in this menu.'
@@ -999,7 +1003,7 @@ p. 查看节点参数（注意保密）
 
 【服务与网络】
 d. 服务与日志
-l. 防火墙 / BBR
+l. 防火墙 / BBR / IPv6 备用
 n. WARP 分流 / 平台检测
 o. Reality 握手网站检测
 
@@ -1023,7 +1027,7 @@ p. View node parameters (keep private)
 
 [Services and network]
 d. Service and logs
-l. Firewall / BBR
+l. Firewall / BBR / IPv6 backup
 n. WARP routing / platform tests
 o. Reality handshake target checks
 

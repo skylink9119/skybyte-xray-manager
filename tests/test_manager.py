@@ -789,6 +789,10 @@ class EngineTests(TemporaryFixture):
             server=core.server_config(core.load_state(self.root),self.root)
             if not block_private:
                 server['routing']['rules']=[]  # Allow only the isolated lab's endpoint in connection tests.
+                # v26.10.29 also enforces private-target protection in Freedom.
+                # This exception exists only in the disposable test config.
+                server['outbounds'][0]['settings']={'finalRules':[{'action':'allow','network':'tcp',
+                    'ip':['127.0.0.1/32'],'port':endpoint.server_address[1]}]}
             server_path=self.base/'lab-server.json';core.write_private(server_path,core.json_text(server))
             socks_port=free_port();client=core.client_config(kind,node,socks_port)
             if kind=='xhttp-tls':

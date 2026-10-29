@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.26
-CORE_VERSION=v26.3.27
+VERSION=0.1.27
+CORE_VERSION=v26.10.29
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
 SKYBYTE_XRAY_BINARY=${SKYBYTE_XRAY_BINARY:-$SKYBYTE_XRAY_LIB/xray}
@@ -75,6 +75,212 @@ show_startup_info(){
  separator
 }
 
+# shellcheck shell=bash
+ipv6_engine(){
+ python3 - xray "$SKYBYTE_XRAY_DIR" '' "$@" <<'PY_IPV6'
+"""Native IPv6 backup checks. No downloads, routing changes, or credential output."""
+import ipaddress
+import json
+import pathlib
+import socket
+import subprocess
+import time
+
+
+def public_ipv6(value):
+    if isinstance(value, str) and "%" in value:
+        raise ValueError("Scoped IPv6 is not a public entry address")
+    try:
+        address = ipaddress.IPv6Address(value)
+    except (ValueError, TypeError):
+        raise ValueError('请输入公网 IPv6，不含方括号、端口或网卡后缀 / Enter a public IPv6 without brackets, port or scope') from None
+    if not address.is_global or address.is_multicast or address.ipv4_mapped or address.is_reserved:
+        raise ValueError('需要原生公网 IPv6，不能使用回环、内网或映射地址 / Native public IPv6 required')
+    return str(address)
+
+
+def ipv6_candidates():
+    result = subprocess.run(['ip', '-j', '-6', 'addr', 'show', 'scope', 'global'],
+                            capture_output=True, text=True, check=True, timeout=4)
+    candidates = []
+    for interface in json.loads(result.stdout):
+        if 'UP' not in interface.get('flags', []):
+            continue
+        for item in interface.get('addr_info', []):
+            if item.get('family') != 'inet6' or item.get('scope') != 'global':
+                continue
+            flags = set(item.get('flags', []))
+            if flags & {'tentative', 'dadfailed', 'deprecated', 'temporary'} or any(item.get(k) for k in ('tentative', 'dadfailed', 'deprecated', 'temporary')) or item.get('preferred_life_time') == 0:
+                continue
+            try:
+                value = public_ipv6(item['local'])
+            except ValueError:
+                continue
+            if value not in candidates:
+                candidates.append(value)
+    return candidates
+
+
+def ipv6_local(value):
+    value = public_ipv6(value)
+    if value not in ipv6_candidates():
+        raise ValueError('IPv6 未配置在本机可用网卡，或地址尚未就绪 / IPv6 is not assigned and ready on this VPS')
+    result = subprocess.run(['ip', '-6', 'route', 'get', '2606:4700:4700::1111', 'from', value],
+                            capture_output=True, text=True, check=True, timeout=3)
+    if not result.stdout.strip() or any(word in result.stdout.split() for word in ('unreachable', 'prohibit', 'blackhole')):
+        raise ValueError('没有可用的 IPv6 路由 / No usable IPv6 route')
+    with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as probe:
+        probe.bind((value, 0))
+    return value
+
+
+def ipv6_firewall():
+    """UFW must manage IPv6 when active; never silently edit/reload SSH policy."""
+    import os
+    import shutil
+    if not shutil.which('ufw'):
+        print('提示：未安装 UFW，请安装防火墙并放行 SSH 和节点端口 / Install a firewall; allow SSH and node ports')
+        return
+    result = subprocess.run(['ufw', 'status'], capture_output=True, text=True, timeout=5,
+                            env={**os.environ, 'LC_ALL': 'C'})
+    if result.returncode:
+        raise ValueError('无法读取 UFW 状态 / Cannot inspect UFW')
+    if 'Status: active' not in result.stdout:
+        print('提示：UFW 未启用，请配置防火墙 / UFW is inactive; configure your firewall')
+        return
+    import re
+    if not re.search(r'^IPV6\s*=\s*["\x27]?yes["\x27]?\s*(?:#.*)?$', pathlib.Path('/etc/default/ufw').read_text(), re.M | re.I):
+        raise ValueError('UFW 已启用但未管理 IPv6；请先设置 IPV6=yes 并核对 SSH 的 IPv6 放行规则 / Active UFW does not manage IPv6; enable IPV6=yes and verify IPv6 SSH rules first')
+
+
+def ipv6_bind_check(listeners):
+    for item in listeners:
+        if item['listen'] not in ('0.0.0.0', '::') or item.get('ipv6_only'):
+            raise ValueError('仅支持公网通配监听，拒绝更改回环或 IPv6-only 节点 / Public wildcard listeners required; loopback/IPv6-only nodes are preserved')
+        if item['listen'] == '::':
+            continue
+        transport = socket.SOCK_DGRAM if item['protocol'] == 'udp' else socket.SOCK_STREAM
+        with socket.socket(socket.AF_INET6, transport) as probe:
+            # The current IPv4 listener remains running during preflight.
+            probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            probe.bind(('::', item['port']))
+
+
+def ipv6_listeners(project, root, conf=None, users=True):
+    root = pathlib.Path(root)
+    state = json.loads((root / 'state.json').read_text())
+    if project == 'xray':
+        return [{'listen': n['listen'], 'port': n['port'], 'protocol': 'tcp'}
+                for n in state['nodes'].values() if not n.get('cdn')]
+    configs = [pathlib.Path(conf)]
+    ledger = root / 'users.json'
+    if users and ledger.exists():
+        for user in json.loads(ledger.read_text())['users']:
+            if not user.get('deleted'):
+                identity = user['id']
+                import re
+                if not re.fullmatch('[0-9a-f]{16}', identity):
+                    raise ValueError('Invalid managed user ID')
+                configs.append(root / 'users' / identity / 'server.json')
+    listeners = []
+    for filename in configs:
+        for inbound in json.loads(filename.read_text())['inbounds']:
+            if inbound['type'] in ('vless', 'hysteria2'):
+                listeners.append({'listen': inbound['listen'], 'port': inbound['listen_port'],
+                                  'protocol': 'udp' if inbound['type'] == 'hysteria2' else 'tcp',
+                                  'ipv6_only': inbound.get('ipv6_only', False)})
+    return listeners
+
+
+def ipv6_ready(listeners):
+    """Local TCP dual-stack and UDP6 listener checks; not a public ingress test."""
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            for item in listeners:
+                if item['protocol'] == 'tcp':
+                    for host in ('127.0.0.1', '::1'):
+                        with socket.create_connection((host, item['port']), timeout=.3):
+                            pass
+                else:
+                    result = subprocess.run(['ss', '-H', '-lnu6'], capture_output=True, text=True, check=True, timeout=2)
+                    endpoints = [line.split()[3] for line in result.stdout.splitlines() if len(line.split()) > 4]
+                    if not any(endpoint.rsplit(':', 1)[-1] == str(item['port']) and endpoint.rsplit(':', 1)[0] in ('*', '[::]', '::') for endpoint in endpoints):
+                        raise ValueError('IPv6 UDP listener missing')
+            return
+        except (OSError, ValueError, subprocess.SubprocessError):
+            if time.monotonic() >= deadline:
+                raise ValueError('双栈监听检查失败；恢复原配置 / Dual-stack listener check failed; restoring the previous configuration') from None
+            time.sleep(.2)
+
+
+def ipv6_cli(project, root, conf, action, value=''):
+    if action == 'detect':
+        values = ipv6_candidates()
+        if not values:
+            raise ValueError('VPS 未发现可用的原生公网 IPv6；请先向服务商开通 / No native public IPv6; provision it with your VPS provider first')
+        print('\n'.join(values))
+    elif action == 'check':
+        ipv6_local(value)
+        listeners = ipv6_listeners(project, root, conf)
+        if not listeners:
+            raise ValueError('没有可用的直连节点；Argo/CDN 节点保持不变 / No direct nodes; Argo/CDN nodes are preserved')
+        ipv6_bind_check(listeners)
+        ipv6_firewall()
+    elif action == 'ready':
+        ipv6_ready(ipv6_listeners(project, root, conf, users=False))
+    elif action == 'status':
+        state = json.loads((pathlib.Path(root) / 'state.json').read_text())
+        states = list(state['nodes'].values()) if project == 'xray' else [state]
+        for node in states:
+            backup = node.get('ipv6_backup')
+            print(node.get('name', node.get('node_name', 'SKYBYTE')) + ': ' +
+                  ('IPv6 备用已配置 / IPv6 backup configured: ' + backup['address'] if backup else '未配置 IPv6 备用 / IPv6 backup not configured'))
+        print('客户端网络也必须支持 IPv6；本机检查不等于公网可达。请放行云防火墙的实际 IPv6 TCP/UDP 端口。\nClient IPv6 is required; local checks do not prove public reachability. Allow the actual IPv6 TCP/UDP ports in your provider firewall.')
+    else:
+        raise ValueError('Invalid IPv6 action')
+
+import sys
+try:ipv6_cli(*sys.argv[1:])
+except (ValueError,OSError,KeyError,subprocess.SubprocessError) as error:
+ print(str(error),file=sys.stderr);sys.exit(1)
+PY_IPV6
+}
+ipv6_menu(){
+ local choice candidates selected stage readiness=no
+ if [[ $# == 0 || $1 == --menu ]];then
+  menu 'IPv6 备用入口\n1 查看 IPv6 备用状态\n2 检测并启用 IPv6 备用入口\n3 移除 IPv6 备用入口（保留原节点）\n0 返回' 'IPv6 backup entry\n1 Show IPv6 backup status\n2 Detect and enable IPv6 backup\n3 Remove IPv6 backup (keep original nodes)\n0 Back'
+  [[ ${1:-} != --menu ]] || return 0
+  choice=$(ask '> ' '> ') || return 0
+ else choice=$1;fi
+ case $choice in
+  1) report_output ipv6_engine status;;
+  2)
+   candidates=$(ipv6_engine detect) || return 1
+   say "本机可用公网 IPv6：" "Available native IPv6:"
+   printf '%s\n' "$candidates"
+   selected=$(ask '备用 IPv6（回车使用第一个）：' 'Backup IPv6 (Enter uses first): ') || return 0
+   selected=${selected:-${candidates%%$'\n'*}}
+   helper node-ports >/dev/null && ipv6_engine check "$selected" || return 1
+   warn '保留原地址、UUID、密钥、端口和 SNI，启用双栈监听并额外导出 IPv6 备用节点；CDN 节点保持不变。客户端网络必须支持 IPv6，云防火墙需放行实际 IPv6 端口。参数及链接保存在当前 VPS，请勿公开。' 'Keeps original addresses, UUIDs, keys, ports and SNI. Enables dual-stack and exports IPv6 backup nodes; CDN nodes are preserved. Client IPv6 and provider IPv6 firewall rules are required. Exports remain private on this VPS.'
+   confirm '启用 IPv6 备用入口并重载正在运行的节点？' 'Enable IPv6 backup and reload running nodes?' || return 0
+   stage=$(helper ipv6-prepare --address "$selected") || return 1
+   readiness=ipv6
+   apply_stage "$stage" no "$readiness" || return 1
+   if [[ $(helper ufw-state) == active ]];then
+    helper firewall-allow || return 1
+   fi
+   report_output ipv6_engine status
+   say '重新导入节点后选择“IPv6备用”。已验证本地监听；公网连通需从有 IPv6 的客户端测试。未运行的服务保持停止。' 'Re-import and select the IPv6 backup node. Local listeners checked; test public ingress from an IPv6 client. Stopped services remain stopped.';;
+  3)
+   confirm '移除 IPv6 备用链接并恢复启用前的监听方式？原节点凭据保持不变。' 'Remove IPv6 backup links and restore previous listeners, keeping credentials?' || return 0
+   stage=$(helper ipv6-prepare --disable) || return 1
+   apply_stage "$stage" || return 1
+   report_output ipv6_engine status;;
+  0) return 0;;*) return 1;;
+ esac
+}
+
 helper(){ python3 - "$@" <<'SKYBYTE_PYTHON'
 # Copyright (C) 2026 SKYBYTE (skylink9119)
 # SPDX-License-Identifier: GPL-3.0-only
@@ -109,8 +315,8 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.26"
-CORE_VERSION = "v26.3.27"
+VERSION = "0.1.27"
+CORE_VERSION = "v26.10.29"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
 KINDS = ("vision", "xhttp-reality", "xhttp-tls")
@@ -262,8 +468,15 @@ def validate_state(state):
         extra = {"private", "public", "short_id", "target"} if kind != "xhttp-tls" else {"cert", "key", "cdn"}
         if kind.startswith("xhttp"):
             extra |= {"path", "mode"}
-        if not isinstance(node, dict) or set(node) != required | extra:
+        if not isinstance(node, dict) or set(node) not in (required | extra, required | extra | {"ipv6_backup"}):
             raise ValueError("Invalid node fields")
+        if "ipv6_backup" in node:
+            backup = node["ipv6_backup"]
+            if not isinstance(backup, dict) or set(backup) != {"address", "previous_listen"}:
+                raise ValueError("Invalid IPv6 backup metadata")
+            ip = ipaddress.IPv6Address(backup["address"])
+            if not ip.is_global or ip.is_multicast or ip.ipv4_mapped or ip.is_reserved or "%" in backup["address"] or node["listen"] != "::" or backup["previous_listen"] not in ("::", "0.0.0.0") or node.get("cdn"):
+                raise ValueError("Invalid IPv6 backup address/listener")
         name(node["name"])
         if str(uuid.UUID(node["uuid"])) != node["uuid"]:
             raise ValueError("Invalid UUID")
@@ -500,18 +713,48 @@ def tls_names(state):
     return {node["cert"], node["key"]} if node else set()
 
 
+def ipv6_node(node):
+    result = copy.deepcopy(node)
+    result['address'] = node['ipv6_backup']['address']
+    result['name'] += '-IPv6备用'
+    return result
+
+
+def ipv6_state(state, value=None):
+    result = copy.deepcopy(state)
+    nodes = [n for n in result['nodes'].values() if not n.get('cdn')]
+    if not nodes:
+        raise ValueError('没有直连节点 / No direct nodes installed')
+    for node in nodes:
+        if value is None:
+            backup = node.pop('ipv6_backup', None)
+            if backup:
+                node['listen'] = backup['previous_listen']
+        else:
+            if node['listen'] not in ('::', '0.0.0.0'):
+                raise ValueError('回环节点保持不变，请先使用公网监听 / Loopback nodes are preserved; use a public listener first')
+            previous = node.get('ipv6_backup', {}).get('previous_listen', node['listen'])
+            node['ipv6_backup'] = {'address': str(ipaddress.IPv6Address(value)), 'previous_listen': previous}
+            node['listen'] = '::'
+    return validate_state(result)
+
+
 def owned_names(state):
     return {"state.json", "config.json", "nodes.txt", "subscription-base64.txt"} | tls_names(state) | {
-        "client-" + k + ".json" for k in state["nodes"]}
+        "client-" + k + ".json" for k in state["nodes"]} | {
+        "client-" + k + "-ipv6.json" for k, n in state["nodes"].items() if "ipv6_backup" in n}
 
 
 def render_files(state, root):
     files = {"state.json": json_text(state), "config.json": json_text(server_config(state, root))}
     lines = [node_uri(k, n) for k, n in state["nodes"].items()]
+    lines += [node_uri(k, ipv6_node(n)) for k, n in state['nodes'].items() if 'ipv6_backup' in n]
     nodes = "\n".join(lines) + ("\n" if lines else "")
     files["nodes.txt"] = nodes
     files["subscription-base64.txt"] = base64.b64encode(nodes.encode()).decode() + "\n"
     files.update({"client-" + k + ".json": json_text(client_config(k, n)) for k, n in state["nodes"].items()})
+    files.update({'client-' + k + '-ipv6.json': json_text(client_config(k, ipv6_node(n)))
+                  for k, n in state['nodes'].items() if 'ipv6_backup' in n})
     return files
 
 
@@ -520,7 +763,7 @@ def check_port(host, number):
         with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as listener:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             if ":" in host:
-                listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
             listener.bind((host, number))
     except OSError as error:
         if error.errno == errno.EADDRINUSE:
@@ -711,7 +954,7 @@ def rollback(root, unit):
     meta = json.loads((journal / "meta.json").read_text())
     for relative in meta["names"]:
         if relative not in {"state.json", "config.json", "nodes.txt", "subscription-base64.txt"} and not (
-            re.fullmatch(r"client-(vision|xhttp-reality|xhttp-tls)\.json", relative) or
+            re.fullmatch(r"client-(vision|xhttp-reality|xhttp-tls)(?:-ipv6)?\.json", relative) or
             re.fullmatch(r"tls/[0-9a-f-]{36}\.(crt|key)", relative)):
             raise ValueError("Invalid recovery manifest")
         destination = checked_path(root / relative)
@@ -1612,7 +1855,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "overview", "warp-prepare", "warp-check", "warp-profile", "warp-status", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "parameters", "guard", "download", "probe", "reality-input", "tls-input", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
+                                            "ipv6-prepare", "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "parameters", "guard", "download", "probe", "reality-input", "tls-input", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -1782,6 +2025,16 @@ def main():
         print(prepare(root, binary, options))
     elif options.command == "warp-prepare":
         print(warp_prepare(root, binary, options.proxy_port, options.domains, options.disable))
+    elif options.command == "ipv6-prepare":
+        ensure_owned(root)
+        state = ipv6_state(load_state(root), None if options.disable else options.address)
+        stage = make_stage(root, state)
+        try:
+            finish_stage(stage, state, binary)
+            print(stage)
+        except BaseException:
+            shutil.rmtree(stage)
+            raise
     elif options.command == "commit":
         commit(root, Path(options.stage), binary, unit, options.active, options.enabled)
     elif options.command == "rollback":
@@ -1805,6 +2058,8 @@ def main():
         for kind, node in load_state(root)["nodes"].items():
             print(node["name"] + " | " + kind + " | TCP " + str(node["port"]))
             print(node_uri(kind, node))
+            if 'ipv6_backup' in node:
+                print(node_uri(kind, ipv6_node(node)))
     else:
         ensure_owned(root)
         state = copy.deepcopy(load_state(root))
@@ -1956,7 +2211,7 @@ recover(){
  fi
 }
 apply_stage() (
- local stage=$1 activate=${2:-no} was_active=no was_enabled=no applied=0 accepted=0
+ local stage=$1 activate=${2:-no} readiness=${3:-no} was_active=no was_enabled=no applied=0 accepted=0
  local flags=(--stage "$stage")
  systemctl is-active --quiet skybyte-xray.service && was_active=yes
  systemctl is-enabled --quiet skybyte-xray.service && was_enabled=yes
@@ -1994,6 +2249,7 @@ PY
    if systemctl is-active --quiet skybyte-xray.service; then running=1; break; fi
   done
   (( running )) || return 1
+  [[ $readiness != ipv6 ]] || ipv6_engine ready || return 1
  fi
  helper finalize --stage "$stage" || return 1
  accepted=1
@@ -2325,7 +2581,7 @@ installation_check_menu(){
  case $choice in 1)kind=vision;node_port=443;;2)kind=xhttp-reality;node_port=443;;3)kind=xhttp-tls;node_port=2053;;0)return 0;;*)return 1;;esac
  local entered
  entered=$(ask "TCP 端口 [$node_port]：" "TCP port [$node_port]: ") || return 0;node_port=${entered:-$node_port}
- listen=$(ask '监听：1 IPv4  2 IPv6 [1]：' 'Listen: 1 IPv4  2 IPv6 [1]: ') || return 0
+ listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 0
  case ${listen:-1} in 1)listen=0.0.0.0;;2)listen=::;;*)return 1;;esac
  install_environment_check "$kind" && install_port_check "$node_port" "$listen" || return 1
  if [[ $kind != xhttp-tls ]];then
@@ -2344,7 +2600,7 @@ install_node(){
  node_name=$(ask '节点名称 [SKYBYTE]：' 'Node name [SKYBYTE]: ') || return 1; node_name=${node_name:-SKYBYTE}-$kind
  node_port=$(ask "监听 TCP 端口 [$node_port]：" "TCP listen port [$node_port]: ") || return 1
  case $kind in vision|xhttp-reality) node_port=${node_port:-443};; *) node_port=${node_port:-2053};; esac
- listen=$(ask '监听：1 IPv4  2 IPv6 [1]：' 'Listen: 1 IPv4  2 IPv6 [1]: ') || return 1
+ listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 1
  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
  while :; do
   host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
@@ -2572,6 +2828,7 @@ state=json.loads(state_file.read_text()) if state_file.exists() else {'nodes':{}
 paths=[root/x for x in ['state.json','config.json','nodes.txt','subscription-base64.txt','language']] if state_file.exists() else []
 for kind,node in state['nodes'].items():
  paths.append(root/('client-'+kind+'.json'))
+ if 'ipv6_backup' in node:paths.append(root/('client-'+kind+'-ipv6.json'))
  if kind=='xhttp-tls': paths.extend([root/node['cert'],root/node['key']])
 paths.extend([unit,lib/'xray'])
 if any(p.is_symlink() or (p.exists() and not p.is_file()) for p in paths): raise SystemExit('Unsafe managed file')
@@ -2728,7 +2985,7 @@ network_menu(){
  local choice value
  # --menu renders only; a numeric argument executes one selected operation.
  if [[ $# == 0 || $1 == --menu ]]; then
- menu '防火墙\n1 查看防火墙状态\n2 安装并启用 UFW\n3 放行全部节点 TCP 端口\n4 放行指定 TCP 端口\n5 停用/卸载 UFW\n\nBBR\n6 查看 BBR 状态\n7 启用 BBR + fq\n8 恢复启用前参数\n\n0 返回' 'Firewall\n1 Show firewall status\n2 Install and enable UFW\n3 Allow all node TCP ports\n4 Allow a TCP port\n5 Disable/remove UFW\n\nBBR\n6 Show BBR status\n7 Enable BBR + fq\n8 Restore previous settings\n\n0 Back'
+ menu '防火墙\n1 查看防火墙状态\n2 安装并启用 UFW\n3 放行全部节点 TCP 端口\n4 放行指定 TCP 端口\n5 停用/卸载 UFW\n\nBBR\n6 查看 BBR 状态\n7 启用 BBR + fq\n8 恢复启用前参数\n\nIPv6 备用入口\n9 IPv6 状态 / 启用 / 移除备用入口\n\n0 返回' 'Firewall\n1 Show firewall status\n2 Install and enable UFW\n3 Allow all node TCP ports\n4 Allow a TCP port\n5 Disable/remove UFW\n\nBBR\n6 Show BBR status\n7 Enable BBR + fq\n8 Restore previous settings\n\nIPv6 backup entry\n9 IPv6 status / enable / remove backup entry\n\n0 Back'
  [[ ${1:-} != --menu ]] || return 0
  choice=$(ask '> ' '> ') || return 1
  else
@@ -3580,6 +3837,7 @@ run_submenu(){
   say '操作后留在此菜单；0 返回上一层。' 'Stay in this menu after each operation; 0 returns one level.'
   choice=$(ask '> ' '> ') || return 0
   [[ $choice != 0 ]] || return 0
+  if [[ $handler == network_menu && $choice == 9 ]];then run_submenu ipv6_menu;continue;fi
   if [[ $handler == warp_menu && $choice == 6 ]];then run_submenu media_check;continue;fi
   if ! ( "$handler" "$choice" ); then
    error '操作未完成或已取消；可在当前菜单继续选择。' 'Operation incomplete or cancelled; choose again in this menu.'
@@ -3601,7 +3859,7 @@ p. 查看节点参数（注意保密）
 
 【服务与网络】
 d. 服务与日志
-l. 防火墙 / BBR
+l. 防火墙 / BBR / IPv6 备用
 n. WARP 分流 / 平台检测
 o. Reality 握手网站检测
 
@@ -3625,7 +3883,7 @@ p. View node parameters (keep private)
 
 [Services and network]
 d. Service and logs
-l. Firewall / BBR
+l. Firewall / BBR / IPv6 backup
 n. WARP routing / platform tests
 o. Reality handshake target checks
 
