@@ -20,6 +20,9 @@ assert shell.count('# BUILD_MEDIA') == 1
 media = (ROOT / 'src/media.py').read_text()
 compile(media, 'src/media.py', 'exec')
 shell = shell.replace('# BUILD_MEDIA', media.split("\nif __name__=='__main__':", 1)[0])
+ipv6 = (ROOT / 'src/ipv6.py').read_text()
+compile(ipv6, 'src/ipv6.py', 'exec')
+shell = shell.replace('# BUILD_IPV6', (ROOT / 'src/ipv6.sh').read_text().replace('# BUILD_IPV6_PY', ipv6))
 python = (ROOT / 'src/core.py').read_text()
 compile(python, 'src/core.py', 'exec')
 helper = "helper(){ python3 - \"$@\" <<'SKYBYTE_PYTHON'\n" + python + "\nSKYBYTE_PYTHON\n}\n"

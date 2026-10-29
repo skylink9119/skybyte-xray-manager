@@ -31,8 +31,8 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.26"
-CORE_VERSION = "v26.3.27"
+VERSION = "0.1.27"
+CORE_VERSION = "v26.10.29"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
 KINDS = ("vision", "xhttp-reality", "xhttp-tls")
@@ -184,8 +184,15 @@ def validate_state(state):
         extra = {"private", "public", "short_id", "target"} if kind != "xhttp-tls" else {"cert", "key", "cdn"}
         if kind.startswith("xhttp"):
             extra |= {"path", "mode"}
-        if not isinstance(node, dict) or set(node) != required | extra:
+        if not isinstance(node, dict) or set(node) not in (required | extra, required | extra | {"ipv6_backup"}):
             raise ValueError("Invalid node fields")
+        if "ipv6_backup" in node:
+            backup = node["ipv6_backup"]
+            if not isinstance(backup, dict) or set(backup) != {"address", "previous_listen"}:
+                raise ValueError("Invalid IPv6 backup metadata")
+            ip = ipaddress.IPv6Address(backup["address"])
+            if not ip.is_global or ip.is_multicast or ip.ipv4_mapped or ip.is_reserved or "%" in backup["address"] or node["listen"] != "::" or backup["previous_listen"] not in ("::", "0.0.0.0") or node.get("cdn"):
+                raise ValueError("Invalid IPv6 backup address/listener")
         name(node["name"])
         if str(uuid.UUID(node["uuid"])) != node["uuid"]:
             raise ValueError("Invalid UUID")
@@ -422,18 +429,48 @@ def tls_names(state):
     return {node["cert"], node["key"]} if node else set()
 
 
+def ipv6_node(node):
+    result = copy.deepcopy(node)
+    result['address'] = node['ipv6_backup']['address']
+    result['name'] += '-IPv6备用'
+    return result
+
+
+def ipv6_state(state, value=None):
+    result = copy.deepcopy(state)
+    nodes = [n for n in result['nodes'].values() if not n.get('cdn')]
+    if not nodes:
+        raise ValueError('没有直连节点 / No direct nodes installed')
+    for node in nodes:
+        if value is None:
+            backup = node.pop('ipv6_backup', None)
+            if backup:
+                node['listen'] = backup['previous_listen']
+        else:
+            if node['listen'] not in ('::', '0.0.0.0'):
+                raise ValueError('回环节点保持不变，请先使用公网监听 / Loopback nodes are preserved; use a public listener first')
+            previous = node.get('ipv6_backup', {}).get('previous_listen', node['listen'])
+            node['ipv6_backup'] = {'address': str(ipaddress.IPv6Address(value)), 'previous_listen': previous}
+            node['listen'] = '::'
+    return validate_state(result)
+
+
 def owned_names(state):
     return {"state.json", "config.json", "nodes.txt", "subscription-base64.txt"} | tls_names(state) | {
-        "client-" + k + ".json" for k in state["nodes"]}
+        "client-" + k + ".json" for k in state["nodes"]} | {
+        "client-" + k + "-ipv6.json" for k, n in state["nodes"].items() if "ipv6_backup" in n}
 
 
 def render_files(state, root):
     files = {"state.json": json_text(state), "config.json": json_text(server_config(state, root))}
     lines = [node_uri(k, n) for k, n in state["nodes"].items()]
+    lines += [node_uri(k, ipv6_node(n)) for k, n in state['nodes'].items() if 'ipv6_backup' in n]
     nodes = "\n".join(lines) + ("\n" if lines else "")
     files["nodes.txt"] = nodes
     files["subscription-base64.txt"] = base64.b64encode(nodes.encode()).decode() + "\n"
     files.update({"client-" + k + ".json": json_text(client_config(k, n)) for k, n in state["nodes"].items()})
+    files.update({'client-' + k + '-ipv6.json': json_text(client_config(k, ipv6_node(n)))
+                  for k, n in state['nodes'].items() if 'ipv6_backup' in n})
     return files
 
 
@@ -442,7 +479,7 @@ def check_port(host, number):
         with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as listener:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             if ":" in host:
-                listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
             listener.bind((host, number))
     except OSError as error:
         if error.errno == errno.EADDRINUSE:
@@ -633,7 +670,7 @@ def rollback(root, unit):
     meta = json.loads((journal / "meta.json").read_text())
     for relative in meta["names"]:
         if relative not in {"state.json", "config.json", "nodes.txt", "subscription-base64.txt"} and not (
-            re.fullmatch(r"client-(vision|xhttp-reality|xhttp-tls)\.json", relative) or
+            re.fullmatch(r"client-(vision|xhttp-reality|xhttp-tls)(?:-ipv6)?\.json", relative) or
             re.fullmatch(r"tls/[0-9a-f-]{36}\.(crt|key)", relative)):
             raise ValueError("Invalid recovery manifest")
         destination = checked_path(root / relative)
@@ -1534,7 +1571,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "overview", "warp-prepare", "warp-check", "warp-profile", "warp-status", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "parameters", "guard", "download", "probe", "reality-input", "tls-input", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
+                                            "ipv6-prepare", "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "parameters", "guard", "download", "probe", "reality-input", "tls-input", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -1704,6 +1741,16 @@ def main():
         print(prepare(root, binary, options))
     elif options.command == "warp-prepare":
         print(warp_prepare(root, binary, options.proxy_port, options.domains, options.disable))
+    elif options.command == "ipv6-prepare":
+        ensure_owned(root)
+        state = ipv6_state(load_state(root), None if options.disable else options.address)
+        stage = make_stage(root, state)
+        try:
+            finish_stage(stage, state, binary)
+            print(stage)
+        except BaseException:
+            shutil.rmtree(stage)
+            raise
     elif options.command == "commit":
         commit(root, Path(options.stage), binary, unit, options.active, options.enabled)
     elif options.command == "rollback":
@@ -1727,6 +1774,8 @@ def main():
         for kind, node in load_state(root)["nodes"].items():
             print(node["name"] + " | " + kind + " | TCP " + str(node["port"]))
             print(node_uri(kind, node))
+            if 'ipv6_backup' in node:
+                print(node_uri(kind, ipv6_node(node)))
     else:
         ensure_owned(root)
         state = copy.deepcopy(load_state(root))
