@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.24
+VERSION=0.1.25
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -795,17 +795,66 @@ PY_WARP_PORT
  ((ready)) || { error 'WARP 尚未就绪，节点分流未改变。可稍后选择选项 2 重试。' 'WARP is not ready; node routing is unchanged. Retry with option 2 later.'; return 1; }
  warp_apply "$proxy_port"
 }
+media_engine(){
+ python3 - "$@" <<'PY_DIAGNOSTICS'
+# BUILD_MEDIA
+import sys
+try: diagnostic_main(sys.argv[1:])
+except (ValueError, OSError, subprocess.SubprocessError) as error:
+ print('检测失败 / Diagnostic failed: '+safe_text(error), file=sys.stderr);sys.exit(1)
+PY_DIAGNOSTICS
+}
 warp_platform_test(){
  local proxy_port=$1
  helper warp-check --proxy-port "$proxy_port" || return 1
- say '将匿名访问 Netflix、Disney+、ChatGPT 和 Gemini，对比直连 IPv4 与 WARP；不登录账号，页面可访问不等于播放或账号可用。' 'Compare anonymous Netflix, Disney+, ChatGPT and Gemini responses over direct IPv4 and WARP. No account login; page access does not verify playback or account access.'
- python3 - "$SKYBYTE_XRAY_DIR/reports" "$proxy_port" "$LANGUAGE" <<'PY_WARP_MEDIA'
-# BUILD_MEDIA
-import sys
-PROBES={key:value for key,value in PROBES.items() if key in ('Netflix','Disney+','ChatGPT','Gemini')}
-run(['4','warp'],sys.argv[1],int(sys.argv[2]),'en_US' if sys.argv[3]=='en' else 'zh_CN')
-PY_WARP_MEDIA
+ media_engine compare "$SKYBYTE_XRAY_DIR/reports" "$LANGUAGE" "$proxy_port"
 }
+media_check(){
+ local selection action port=''
+ if [[ $# == 0 || $1 == --menu || $1 == --interactive ]];then
+  menu '========== 专业网络检测 ==========
+【流媒体与 AI · UnlockTests】
+1. VPS 直连 IPv4（全球 + AI）
+2. VPS 直连 IPv6（全球 + AI）
+3. VPS 直连双栈
+4. WARP 代理出口
+5. 直连 IPv4 / WARP 对比
+6. 全地区平台（VPS IPv4）
+
+【线路与测速 · 融合怪 Go】
+7. 三网回程 / 路由
+8. 三网测速（消耗流量）
+9. 综合网络测评（消耗流量）
+0. 返回' '========== Professional diagnostics ==========
+[Media and AI · UnlockTests]
+1. VPS direct IPv4 (global + AI)
+2. VPS direct IPv6 (global + AI)
+3. VPS direct dual stack
+4. WARP proxy egress
+5. Direct IPv4 / WARP comparison
+6. All-region platforms (VPS IPv4)
+
+[Routes and speed · goecs]
+7. Return routes / traceroute
+8. Speed tests (uses bandwidth)
+9. Comprehensive network tests (uses bandwidth)
+0. Back'
+  [[ ${1:-} != --menu ]] || return 0
+  selection=$(ask '> ' '> ') || return 0
+ else selection=$1;fi
+ case $selection in
+  1)action=4;;2)action=6;;3)action=both;;4)action=warp;;5)action=compare;;6)action=all;;
+  7)action=route;;8)action=speed;;9)action=full;;0)return 0;;*)return 1;;
+ esac
+ say '首次按需下载官方检测工具并校验；报告仅在本机，综合检测关闭上传。结果不保证账号可用或实际播放。' 'Official tools are downloaded and verified on demand; reports stay local and benchmark uploads are disabled. Results do not guarantee playback or account access.'
+ case $action in
+  warp|compare)port=$(ask '本机 SOCKS5 端口 [40000]：' 'Local SOCKS5 port [40000]: ') || return 0
+   port=${port:-40000};helper warp-check --proxy-port "$port" || return 1;;
+  speed|full)confirm '测速可能消耗大量流量并临时占用带宽，继续？' 'Tests may use substantial traffic and bandwidth. Continue?' || return 0;;
+ esac
+ media_engine "$action" "$SKYBYTE_XRAY_DIR/reports" "$LANGUAGE" "$port"
+}
+
 warp_menu(){
  local choice proxy_port stage
  # --menu renders only; a numeric argument executes one selected operation.
@@ -823,6 +872,7 @@ warp_menu(){
 【连接检测】
 4. 验证 WARP 出口
 5. 对比直连 / WARP 平台响应
+6. 专业流媒体 / 回程 / 测速
 
 0. 返回
 --------------------------------------' '
@@ -836,6 +886,7 @@ warp_menu(){
 [Connection tests]
 4. Verify WARP egress
 5. Compare direct / WARP platform responses
+6. Professional media / routes / speed tests
 
 0. Back
 --------------------------------------'
@@ -846,6 +897,7 @@ warp_menu(){
  fi
  case $choice in
   1) warp_install_client;;
+  6) media_check --interactive;;
   2|4|5)
    proxy_port=$(ask '本机 SOCKS5 端口 [40000]：' 'Local SOCKS5 port [40000]: ') || return 0
    proxy_port=${proxy_port:-40000}
@@ -913,6 +965,7 @@ run_submenu(){
   say '操作后留在此菜单；0 返回上一层。' 'Stay in this menu after each operation; 0 returns one level.'
   choice=$(ask '> ' '> ') || return 0
   [[ $choice != 0 ]] || return 0
+  if [[ $handler == warp_menu && $choice == 6 ]];then run_submenu media_check;continue;fi
   if ! ( "$handler" "$choice" ); then
    error '操作未完成或已取消；可在当前菜单继续选择。' 'Operation incomplete or cancelled; choose again in this menu.'
   fi

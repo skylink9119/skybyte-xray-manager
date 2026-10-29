@@ -93,24 +93,10 @@ class WarpConfigTests(TemporaryFixture):
                 listener = bad
                 with self.assertRaises(ValueError): core.warp_verify(40000)
 
-    def test_chatgpt_200_is_unknown_explicit_region_error_is_restricted(self):
-        def response(code, body):
-            return {'code': code, 'body': body, 'url': 'https://chatgpt.com/', 'error': False}
-        self.assertEqual(media.classify('ChatGPT', [response(200, '<html>Welcome</html>')])['status'], 'unknown')
-        self.assertEqual(media.classify('ChatGPT', [response(403, '{"code":"unsupported_country_region_territory"}')])['status'], 'restricted')
-        self.assertEqual(media.classify('ChatGPT', [response(403, 'verify you are human')])['status'], 'verification')
-        self.assertEqual(media.classify('Netflix', [response(403, 'unsupported_country')])['status'], 'verification')
-        self.assertEqual(media.classify('ChatGPT', [response(200, '<script>const messages={code:"unsupported_country"};</script>Welcome')])['status'], 'unknown')
 
     def test_gemini_domains_and_anonymous_responses(self):
         self.assertEqual(core.WARP_PROFILES['gemini'], ['gemini.google.com', 'aistudio.google.com', 'generativelanguage.googleapis.com'])
         self.assertNotIn('google.com', core.WARP_PROFILES['gemini'])
-        self.assertIn('Gemini', media.PROBES)
-        for code, body, expected in [(200, 'Welcome', 'unknown'), (403, 'Verify you are human', 'verification'),
-                                     (400, '{"error":{"code":400,"message":"User location is not supported for the API use."}}', 'restricted'),
-                                     (200, '<script>const message="not available in your country";</script>Welcome', 'unknown')]:
-            response = {'code': code, 'body': body, 'url': 'https://gemini.google.com/', 'error': False}
-            self.assertEqual(media.classify('Gemini', [response])['status'], expected)
 
 
 @unittest.skipUnless(ENGINE, 'Set XRAY_BIN to the official Xray binary')
@@ -254,7 +240,7 @@ warp_menu
             self.assertNotIn(r'\n', result.stdout)
             self.assertIn('【分流设置】' if language == 'zh' else '[Routing]', result.stdout)
             numbers = [int(line.split('.', 1)[0]) for line in result.stdout.splitlines() if line[:1].isdigit() and '. ' in line]
-            self.assertEqual(numbers, [1, 2, 3, 4, 5, 0])
+            self.assertEqual(numbers, [1, 2, 3, 4, 5, 6, 0])
             for line in result.stdout.splitlines():
                 width = sum(2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1 for char in line)
                 self.assertLessEqual(width, 80, line)
