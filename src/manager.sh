@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.25
+VERSION=0.1.26
 CORE_VERSION=v26.3.27
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -32,6 +32,19 @@ ask(){
 }
 confirmed(){ [[ $1 =~ ^[[:space:]]*[Yy][[:space:]]*$ ]]; }
 confirm(){ local answer; answer=$(ask "$1 [y/N]：" "$2 [y/N]: ") || return 1; confirmed "$answer"; }
+# Keep report commands attached to the terminal (vnStat live mode needs a TTY).
+report_output(){
+ local report_status=0 report_reset=$RESET
+ if [[ ! -t 1 || -n ${NO_COLOR:-} ]];then "$@";return $?;fi
+ printf '%s' "$YELLOW"
+ local GREEN=$YELLOW RED=$YELLOW CYAN=$YELLOW RESET=$YELLOW
+ (
+  export NO_COLOR=1 SYSTEMD_COLORS=0 CLICOLOR=0
+  "$@"
+ ) || report_status=$?
+ printf '%s' "$report_reset"
+ return "$report_status"
+}
 separator(){ printf '%s\n' '------------------------------------------------------------'; }
 show_banner(){
  printf '%s\n============================================================\n' "$CYAN"
@@ -58,7 +71,7 @@ show_startup_info(){
   OVERVIEW_CACHE_LANGUAGE=$LANGUAGE
  fi
  separator
- printf '%s\n' "$OVERVIEW_CACHE"
+ report_output printf '%s\n' "$OVERVIEW_CACHE"
  separator
 }
 
@@ -247,20 +260,20 @@ PY_INSTALL_CHECKS
 install_environment_check(){
  local options=(--project xray --language "$LANGUAGE" --phase environment)
  [[ ${1:-vision} == xhttp-tls ]] || options+=(--reality)
- install_check_engine "${options[@]}" --paths "$SKYBYTE_XRAY_DIR" "$SKYBYTE_XRAY_LIB" "${TMPDIR:-/tmp}"
+ report_output install_check_engine "${options[@]}" --paths "$SKYBYTE_XRAY_DIR" "$SKYBYTE_XRAY_LIB" "${TMPDIR:-/tmp}"
 }
 install_port_check(){
- install_check_engine --project xray --language "$LANGUAGE" --phase ports --listen "$2" --tcp-port "$1"
+ report_output install_check_engine --project xray --language "$LANGUAGE" --phase ports --listen "$2" --tcp-port "$1"
 }
 install_download_check(){
  local options=(--project xray --language "$LANGUAGE" --phase download)
  [[ ! -x $SKYBYTE_XRAY_BINARY || -L $SKYBYTE_XRAY_BINARY ]] || options+=(--existing-core)
- install_check_engine "${options[@]}"
+ report_output install_check_engine "${options[@]}"
 }
 install_reality_target(){
  helper reality-input --target "$2" --sni "$1" || return 1
  say '正在检查 Reality 目标的 DNS、TCP、TLS 与证书（总时限 12 秒）……' 'Checking Reality target DNS, TCP, TLS and certificate (12-second deadline)…'
- if ! reality_engine --project xray --language "$LANGUAGE" --target "$2" --sni "$1";then
+ if ! report_output reality_engine --project xray --language "$LANGUAGE" --target "$2" --sni "$1";then
   error 'Reality 握手目标检测未通过；请更换网站或修复 VPS 出站网络、DNS、时间与 CA 证书后重试。尚未写入新节点。' 'Reality target failed checks; change the target or repair VPS egress, DNS, clock and CA roots. No new node was written.'
   return 1
  fi
@@ -340,7 +353,7 @@ install_node(){
  show_nodes
 }
 show_parameters(){
- helper parameters --language "$LANGUAGE"
+ report_output helper parameters --language "$LANGUAGE"
 }
 show_nodes(){
  [[ -f $SKYBYTE_XRAY_DIR/state.json ]] || { warn '尚未安装节点。' 'No nodes installed.'; return 0; }
@@ -450,10 +463,10 @@ service_menu(){
   choice=$1
  fi
  case $choice in
-  1) systemctl status skybyte-xray.service --no-pager || true;;
+  1) report_output systemctl status skybyte-xray.service --no-pager || true;;
   2) systemctl start skybyte-xray.service;; 3) systemctl stop skybyte-xray.service;; 4) systemctl restart skybyte-xray.service;;
   5) "$SKYBYTE_XRAY_BINARY" run -test -config "$SKYBYTE_XRAY_DIR/config.json";;
-  6) journalctl -u skybyte-xray.service -n 60 --no-pager;; 0) return 0;; *) return 1;;
+  6) report_output journalctl -u skybyte-xray.service -n 60 --no-pager;; 0) return 0;; *) return 1;;
  esac
 }
 make_backup(){
@@ -557,7 +570,7 @@ firewall_open(){
  local value=${1:-} zone
  local flags=()
  [[ -z $value ]] || flags+=(--ports "$value")
- helper firewall-status || return 1
+ report_output helper firewall-status || return 1
  zone=$(ask 'firewalld 区域 [回车使用默认区域；UFW 忽略]：' 'firewalld zone [Enter for default; ignored by UFW]: ') || return 1
  [[ -z $zone ]] || flags+=(--zone "$zone")
  warn '只向已启用的 UFW/firewalld 添加入站 TCP 放行，不改 SSH 或默认策略。请同时检查服务商安全组。' 'Adds inbound TCP allows to active UFW/firewalld only; SSH and default policies stay unchanged. Also check provider security groups.'
@@ -598,7 +611,7 @@ install_firewall(){
  fi
  helper firewall-setup "${flags[@]}" || return 1
  say 'UFW 已启用；请在保留当前 SSH 会话时，新开一个 SSH 连接验证访问。' 'UFW enabled; keep this SSH session and verify access from a new SSH connection.'
- helper firewall-status
+ report_output helper firewall-status
 }
 remove_firewall(){
  local choice current=absent plan='' result action=--remove
@@ -685,7 +698,7 @@ network_menu(){
   choice=$1
  fi
  case $choice in
-  1) helper firewall-status;;
+  1) report_output helper firewall-status;;
   2) install_firewall;;
   3) firewall_open;;
   4) value=$(ask '要放行的 TCP 端口（1–65535）：' 'TCP port to allow (1–65535): ') || return 1
@@ -694,14 +707,14 @@ network_menu(){
      fi
      firewall_open "$value";;
   5) remove_firewall;;
-  6) helper bbr-status;;
+  6) report_output helper bbr-status;;
   7) warn 'BBR 调整全系统新 TCP 连接的默认拥塞控制；不保证提速，不更换内核或重启服务，也不替换现有网卡队列。' 'BBR changes the system default for new TCP connections; speed gains vary. No kernel replacement, service restart or live interface queue replacement.'
      confirm '保存原参数并启用 BBR + fq？' 'Save previous values and enable BBR + fq?' || return 0
      helper bbr-enable || return 1
-     helper bbr-status;;
+     report_output helper bbr-status;;
   8) confirm '恢复本脚本启用 BBR 前的系统参数并移除本脚本的持久化文件？' 'Restore values saved before enabling BBR and remove the managed persistence file?' || return 0
      helper bbr-restore || return 1
-     helper bbr-status;;
+     report_output helper bbr-status;;
   0) return 0;; *) return 1;;
  esac
 }
@@ -807,7 +820,7 @@ PY_DIAGNOSTICS
 warp_platform_test(){
  local proxy_port=$1
  helper warp-check --proxy-port "$proxy_port" || return 1
- media_engine compare "$SKYBYTE_XRAY_DIR/reports" "$LANGUAGE" "$proxy_port"
+ report_output media_engine compare "$SKYBYTE_XRAY_DIR/reports" "$LANGUAGE" "$proxy_port"
 }
 media_check(){
  local selection action port=''
@@ -852,7 +865,7 @@ media_check(){
    port=${port:-40000};helper warp-check --proxy-port "$port" || return 1;;
   speed|full)confirm '测速可能消耗大量流量并临时占用带宽，继续？' 'Tests may use substantial traffic and bandwidth. Continue?' || return 0;;
  esac
- media_engine "$action" "$SKYBYTE_XRAY_DIR/reports" "$LANGUAGE" "$port"
+ report_output media_engine "$action" "$SKYBYTE_XRAY_DIR/reports" "$LANGUAGE" "$port"
 }
 
 warp_menu(){
@@ -860,7 +873,7 @@ warp_menu(){
  # --menu renders only; a numeric argument executes one selected operation.
  if [[ $# == 0 || $1 == --menu ]]; then
  printf '\n%s%s%s\n' "$CYAN" "$(if [[ $LANGUAGE == en ]]; then printf '========== WARP Manager =========='; else printf '========== WARP 管理 =========='; fi)" "$RESET"
- helper warp-status --language "$LANGUAGE" || return 1
+ report_output helper warp-status --language "$LANGUAGE" || return 1
  menu '
 【代理设置】
 1. 安装官方 WARP 本机代理
@@ -931,7 +944,7 @@ reality_replace(){
  [[ $target != 0 ]] || return 0
  target=${target:-$sni:443}
  helper reality-edit --kind "$kind" --sni "$sni" --target "$target" --check-only || return 1
- if ! reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";then
+ if ! report_output reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";then
   error '新目标检测未通过，保留原配置。' 'New target failed checks; original configuration retained.';return 1
  fi
  warn '更换会短暂重启正在运行的服务；保留 UUID、密钥、端口及路径。所选节点的客户端需重新导入更新后的配置。' 'Running services will briefly restart; UUID, keys, port and path are retained. Re-import updated configuration on clients of this node.'
@@ -948,12 +961,12 @@ reality_menu(){
   choice=$(ask '> ' '> ') || return 0
  else choice=$1; fi
  case $choice in
-  1) reality_engine --project xray --language "$LANGUAGE" --config "$SKYBYTE_XRAY_DIR/config.json";;
+  1) report_output reality_engine --project xray --language "$LANGUAGE" --config "$SKYBYTE_XRAY_DIR/config.json";;
   2) target=$(ask '握手目标（域名或 域名:端口，0 返回）：' 'Target (hostname or host:port, 0 to return): ') || return 0
      [[ $target != 0 ]] || return 0
      [[ -n $target ]] || { error '请填写握手目标。' 'Enter a target.';return 1; }
      sni=$(ask '握手域名 / SNI（回车使用目标域名）：' 'Handshake SNI (Enter uses target hostname): ') || return 0
-     reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";;
+     report_output reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";;
   3) reality_replace;;
   0) return 0;; *) return 1;;
  esac

@@ -28,15 +28,17 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.25**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.26**, pinned core **v26.3.27**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
-v0.1.25 replaces WARP media comparison with verified UnlockTests and adds professional media/return-route/speed diagnostics at n → 6. See the [audit record](docs/REVIEW.md).
+v0.1.26 uses yellow report output and bordered, aligned media tables, with terminal-width wrapping for long names and error notes.
 
 ## Startup overview
 
 The main menu shows OS, architecture, kernel, CPU, memory/swap, root-disk use, uptime and load; actual Xray version, service and boot state, installed protocols/ports, current BBR and configured WARP routing. Related components include the official WARP client, UFW, firewalld, Fail2ban and QR utility, with installation and runtime states distinguished. Probes are local and read-only. Service, version and UFW queries run concurrently with a two-second timeout each. Read-only menu returns reuse an in-memory snapshot for up to five seconds; management actions and language changes refresh it immediately. No additional background service. Missing probes do not block the menu. No credentials are displayed; configured routing is not proof of connectivity.
 
 ## Professional media, routes and speed tests
+
+Reports use yellow terminal output; media results appear in bordered, terminal-width-aware tables with wrapped provider names and notes. Menus keep their green labels. NO_COLOR and redirected output remain plain text.
 
 Open **n → 6**. [UnlockTests](https://github.com/oneclickvirt/UnlockTests) (Apache-2.0), the specialized media engine used by goecs, replaces the old page parser. Default coverage is global platforms plus AI, including Netflix, Disney+, YouTube Premium, TikTok, Spotify, ChatGPT and Gemini; all-region tests are available. Choose VPS direct IPv4/IPv6/both, WARP, or direct/WARP comparison. Preserve upstream status, region, unlock type and errors rather than interpreting HTTP 200 as unlocking.
 
@@ -153,7 +155,7 @@ The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality
 
 ## Manager self-update
 
-Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.25 installer once to obtain this menu.
+Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.26 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 
