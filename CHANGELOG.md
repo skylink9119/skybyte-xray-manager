@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.24 — 2026-10-29
+
+- 主菜单按节点、服务与网络、更新与备份、设置分组；子菜单一项一行，现有字母/数字入口不变。
+- 拒绝执行空文件、HTML 错误页和语法错误的安装器；安装下载统一 HTTPS 与连接超时。
+- 修复节点列表读取错误被进程替换吞掉的问题，失败不再显示导出成功提示，菜单保持可用。
+- 无效编辑选项直接提示；取消协议选择返回编辑菜单；修正使用说明中 Reality 更换功能和更新入口提示。
+
 ## 0.1.23 — 2026-10-28
 
 - Run startup service, core-version and UFW probes concurrently instead of stacking two-second waits. Preserve read-only local queries, ownership checks and credential filtering.

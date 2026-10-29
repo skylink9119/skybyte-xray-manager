@@ -4,6 +4,7 @@
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 
@@ -53,14 +54,19 @@ curl(){
   printf '%s\n' 'IFS= read -r answer || exit 1' 'printf "stdin:%s\n" "$answer" >> "$TEST_ROOT/events"'
   [[ $TEST_FAILURE != download ]];return
  fi
- if [[ $TEST_FAILURE == syntax ]];then printf 'if ((\n' > "$output";else printf 'downloaded fixture\n' > "$output";fi
+ case $TEST_FAILURE in
+  empty) : > "$output";;
+  syntax) printf '#!/usr/bin/env bash\nif ((\n' > "$output";;
+  html) printf '<html>upstream error</html>\n' > "$output";;
+  *) printf '#!/usr/bin/env bash\n# downloaded fixture\n' > "$output";;
+ esac
  [[ $TEST_FAILURE != download ]]
 }
 bash(){
- if [[ $1 == -n ]];then builtin command "$TEST_BASH" "$@";return;fi
+ if [[ $1 == -n ]];then "$TEST_BASH" "$@" || return $?;return 0;fi
  if [[ $1 == -c ]];then
   printf 'launch\n' >> "$TEST_ROOT/events"
-  builtin command "$TEST_BASH" "$@";return
+  "$TEST_BASH" "$@";return
  fi
  [[ -f $1 ]] || return 1
  printf 'launch\n' >> "$TEST_ROOT/events"
@@ -73,10 +79,18 @@ bash(){
         result = subprocess.run([BASH, '-c', definitions+'\n'+action],
             input='menu input preserved\n', capture_output=True, text=True, timeout=10, cwd=self.root,
             env={**os.environ, 'TEST_ROOT':str(self.root), 'TEST_FAILURE':failure, 'TEST_UID':uid,
-                 'OS_RELEASE':str(release), 'TMPDIR':str(self.staging), 'NO_COLOR':'1', 'TEST_BASH':BASH})
+                 'OS_RELEASE':str(release), 'TMPDIR':str(self.staging), 'NO_COLOR':'1', 'TEST_BASH':shutil.which(BASH)})
         events = self.log.read_text().splitlines() if self.log.exists() else []
         self.assertEqual(list(self.staging.iterdir()), [], 'Temporary installer must be cleaned up')
         return result, events
+
+    def test_empty_html_and_malformed_installers_are_never_launched(self):
+        for failure in ('empty', 'html', 'syntax'):
+            with self.subTest(failure=failure):
+                result, events = self.run_case(present=True, failure=failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Invalid installer download', result.stderr)
+                self.assertFalse(any(event == 'launch' for event in events))
 
     def test_existing_curl_skips_apt_and_preserves_interactive_input(self):
         result, events = self.run_case(present=True)
@@ -85,7 +99,7 @@ bash(){
         self.assertEqual(events[-2:], ['launch', 'stdin:menu input preserved'])
         download = events[0]
         self.assertIn("--proto =https --proto-redir =https", download)
-        self.assertIn('https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.23/install.sh', download)
+        self.assertIn('https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.24/install.sh', download)
         self.assertNotIn(' -k ', download)
 
     def test_missing_curl_is_installed_before_download_on_supported_systems(self):

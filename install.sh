@@ -4,13 +4,13 @@
 # Install a complete local package, or fetch the pinned, verified release payload.
 set -Eeuo pipefail
 umask 077
-RELEASE_VERSION=0.1.23
+RELEASE_VERSION=0.1.24
 RELEASE_URL=https://github.com/skylink9119/skybyte-xray-manager/releases/download/v$RELEASE_VERSION
 
 download_manager(){
  local destination=$1
- curl -fsSL --retry 3 --connect-timeout 10 --max-time 180 "$RELEASE_URL/SHA256SUMS" -o "$destination/SHA256SUMS" || return 1
- curl -fsSL --retry 3 --connect-timeout 10 --max-time 180 "$RELEASE_URL/xray-manager.sh" -o "$destination/xray-manager.sh" || return 1
+ curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 180 "$RELEASE_URL/SHA256SUMS" -o "$destination/SHA256SUMS" || return 1
+ curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 180 "$RELEASE_URL/xray-manager.sh" -o "$destination/xray-manager.sh" || return 1
  python3 - "$destination" <<'PY'
 import hashlib,re,sys
 from pathlib import Path
@@ -54,7 +54,7 @@ incoming=manager_version(payload)
 if incoming!=tuple(map(int,sys.argv[4].split('.'))):
     raise SystemExit('Installer/payload version mismatch / 安装入口与主脚本版本不一致')
 if target.exists() and manager_version(target.read_bytes())>incoming:
-    raise SystemExit('Manager downgrade refused / 已安装的管理脚本版本较新，拒绝降级；请使用最新安装入口或菜单 13')
+    raise SystemExit('Manager downgrade refused / 已安装的管理脚本版本较新，拒绝降级；请使用最新安装入口或菜单 m')
 directory.mkdir(parents=True,exist_ok=True,mode=0o700)
 os.chmod(directory,0o700)
 shortcut.parent.mkdir(parents=True,exist_ok=True,mode=0o755)
