@@ -28,9 +28,15 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.28**, pinned core **v26.10.29**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.29**, pinned core **v26.10.29**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
-v0.1.28 adds IPv6 backup entries while preserving IPv4 nodes and credentials, and pins official Xray-core v26.10.29.
+v0.1.29 adds direct node port editing through e → 5, keeps current values on Enter, preserves credentials and updates IPv6 backups. The official core remains v26.10.29.
+
+## Change node port
+
+Open **e → 5**. Only installed nodes are listed; a single node is selected automatically. The current TCP port is shown; Enter keeps it and `y` confirms changes. UUIDs, keys, Short IDs, handshake sites, certificates and XHTTP paths stay intact; IPv6 backups update too. Existing **e → 4** address/port/path editing remains available.
+
+Invalid or busy ports are refused. Active UFW allows the new port before switching listeners; failed status/allow checks preserve the node. Configuration/reload failures roll back and stopped services stay stopped. Newly added UFW rules remain with a warning after rollback; old rules are not deleted. Verify firewalld/provider firewall/NAT mappings yourself, then get new links from **b** and update clients.
 
 ## IPv6 backup entry and core update
 
@@ -163,7 +169,7 @@ The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality
 
 ## Manager self-update
 
-Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.28 installer once to obtain this menu.
+Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.29 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 
