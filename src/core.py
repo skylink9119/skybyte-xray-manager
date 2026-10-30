@@ -31,7 +31,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.28"
+VERSION = "0.1.29"
 CORE_VERSION = "v26.10.29"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -1571,7 +1571,7 @@ def manager_update(target, tag):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["selfcheck", "overview", "warp-prepare", "warp-check", "warp-profile", "warp-status", "prepare", "commit", "rollback", "finalize", "backup", "restore",
-                                            "ipv6-prepare", "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "parameters", "guard", "download", "probe", "reality-input", "tls-input", "journal", "preflight", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
+                                            "ipv6-prepare", "remove", "rename", "edit", "reality-edit", "reality-targets", "refresh-tls", "show", "parameters", "guard", "download", "probe", "reality-input", "tls-input", "journal", "preflight", "node-kinds", "node-port", "node-ports", "firewall-status", "firewall-allow", "bbr-status", "bbr-enable", "bbr-restore", "manager-latest", "manager-update", "firewall-setup-check", "firewall-setup-plan", "firewall-setup", "ufw-state", "ufw-disable", "ufw-remove-plan", "ufw-package-state"])
     parser.add_argument("--root", default=os.environ.get("SKYBYTE_XRAY_DIR", "/etc/skybyte-xray"))
     parser.add_argument("--binary", default=os.environ.get("SKYBYTE_XRAY_BINARY", "/usr/local/lib/skybyte-xray/xray"))
     parser.add_argument("--unit", default=os.environ.get("SKYBYTE_XRAY_UNIT", "/etc/systemd/system/skybyte-xray.service"))
@@ -1659,12 +1659,20 @@ def main():
     if options.command == "manager-update":
         manager_update(checked_path(options.file), options.release)
         return
-    if options.command == "node-ports":
+    if options.command in ("node-ports", "node-port", "node-kinds"):
         root = checked_path(options.root)
         ensure_owned(root)
         nodes = load_state(root)["nodes"]
+        if options.command == "node-port":
+            if options.kind not in nodes:
+                raise ValueError("该协议尚未安装 / Protocol not installed")
+            print(nodes[options.kind]["port"])
+            return
         if not nodes:
             raise ValueError("No nodes installed / 尚未安装节点")
+        if options.command == "node-kinds":
+            print("\n".join(nodes))
+            return
         for kind, node in nodes.items():
             print(node["name"] + " | " + kind + " | TCP " + str(node["port"]))
         return
