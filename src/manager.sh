@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.29
+VERSION=0.1.30
 CORE_VERSION=v26.10.29
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -223,7 +223,10 @@ PY
    if systemctl is-active --quiet skybyte-xray.service; then running=1; break; fi
   done
   (( running )) || return 1
-  [[ $readiness != ipv6 ]] || ipv6_engine ready || return 1
+  case $readiness in
+   ipv6) ipv6_engine ready || return 1;;
+   ipv6-install:*) ipv6_engine ready-install "${readiness#*:}" || return 1;;
+  esac
  fi
  helper finalize --stage "$stage" || return 1
  accepted=1
@@ -302,20 +305,35 @@ installation_check_menu(){
 }
 install_node(){
  local choice kind node_name node_port host sni target listen path='' mode=auto cert='' private_key='' stage
- local flags=()
- menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. 节点安装前检测（不安装）\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. Node installation checks (no installation)\n0. Back'
- choice=$(ask '> ' '> ') || return 1
- case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 4) run_submenu installation_check_menu;return;; 0) return 0;; *) return 1;; esac
+ local ipv6_install=${1:-} ipv6_status ipv6_ufw_status
+ local flags=() apply_options=()
+ if [[ $ipv6_install == ipv6 ]];then
+  choice=${2:-0}
+  case $choice in 1|2|3);;0)return 0;;*)return 1;;esac
+ else
+  menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. 节点安装前检测（不安装）\n5. 搭建 IPv6 节点\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. Node installation checks (no installation)\n5. Install IPv6 nodes\n0. Back'
+  choice=$(ask '> ' '> ') || return 1
+ fi
+ case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 4) run_submenu installation_check_menu;return;; 5) run_submenu ipv6_install_menu;return;; 0) return 0;; *) return 1;; esac
+ if [[ $ipv6_install == ipv6 ]];then
+  if ! command -v ip >/dev/null;then install_environment_check "$kind" || return 1;fi
+  host=$(ipv6_install_address) || { ipv6_status=$?;[[ $ipv6_status == 2 ]] && return 0;return 1; }
+  listen=::
+  warn '使用所选 IPv6 作为节点连接地址，监听支持双栈。客户端网络必须支持 IPv6，云安全组和系统防火墙需放行 IPv6 TCP 端口。纯 IPv6 VPS 访问 IPv4 网站需要另行配置可用出站。已有同协议节点请用 l → 9 增加 IPv6 备用入口。' 'The selected IPv6 is the client address with a dual-stack listener. Client IPv6 and provider/host IPv6 TCP rules are required. IPv6-only VPSs need a separate working egress for IPv4-only sites. Use l → 9 for IPv6 backups on an existing protocol.'
+ fi
  node_name=$(ask '节点名称 [SKYBYTE]：' 'Node name [SKYBYTE]: ') || return 1; node_name=${node_name:-SKYBYTE}-$kind
+ [[ $ipv6_install != ipv6 ]] || node_name+=-IPv6
  node_port=$(ask "监听 TCP 端口 [$node_port]：" "TCP listen port [$node_port]: ") || return 1
  case $kind in vision|xhttp-reality) node_port=${node_port:-443};; *) node_port=${node_port:-2053};; esac
- listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 1
- case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
- while :; do
-  host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
-  [[ $host =~ [^[:space:]] ]] && break
-  warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
- done
+ if [[ $ipv6_install != ipv6 ]];then
+  listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 1
+  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
+  while :; do
+   host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
+   [[ $host =~ [^[:space:]] ]] && break
+   warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
+  done
+ fi
  helper preflight --port "$node_port" --listen "$listen" --address "$host" --name "$node_name" --kind "$kind" || return 1
  install_environment_check "$kind" && install_port_check "$node_port" "$listen" || return 1
  if [[ $kind == xhttp-tls ]]; then
@@ -324,9 +342,11 @@ install_node(){
   private_key=$(ask '私钥文件绝对路径（不修改源文件）：' 'Absolute private-key path (source is preserved): ') || return 1
   helper tls-input --sni "$sni" --cert "$cert" --key "$private_key" || return 1
   local cdn
-  cdn=$(ask '通过 CDN 连接？[y/N]：' 'Use a CDN? [y/N]: ') || return 1
-  if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
-  warn 'CDN 的 DNS、HTTPS 端口及回源 TLS 验证须在提供商后台配置。' 'Configure CDN DNS, supported HTTPS port and verified origin TLS at your provider.'
+  if [[ $ipv6_install != ipv6 ]];then
+   cdn=$(ask '通过 CDN 连接？[y/N]：' 'Use a CDN? [y/N]: ') || return 1
+   if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
+   warn 'CDN 的 DNS、HTTPS 端口及回源 TLS 验证须在提供商后台配置。' 'Configure CDN DNS, supported HTTPS port and verified origin TLS at your provider.'
+  fi
  else
   sni=$(choose_reality_sni) || return 1
   [[ -n $sni ]] || return 0
@@ -351,7 +371,17 @@ install_node(){
  else flags+=(--target "$target"); fi
  [[ $kind != xhttp-* ]] || flags+=(--path "$path" --mode "$mode")
  stage=$(helper prepare "${flags[@]}") || { error '节点配置准备失败，具体原因见上方提示。' 'Node configuration preparation failed; see the reason above.'; return 1; }
- apply_stage "$stage" yes || { error '安装失败，原配置已保留或回退。' 'Install failed; previous configuration retained or restored.'; return 1; }
+ apply_options=("$stage" yes)
+ if [[ $ipv6_install == ipv6 ]];then
+  if ! ipv6_engine check-install "$host";then helper finalize --stage "$stage";return 1;fi
+  if ! ipv6_ufw_status=$(helper ufw-state);then helper finalize --stage "$stage";return 1;fi
+  if [[ $ipv6_ufw_status == active ]];then
+   warn '先放行新端口；后续安装失败时，新增放行规则会保留，请自行核对。' 'Allowing the new port first; added rules remain if installation later fails. Review them if needed.'
+   if ! helper firewall-allow --ports "$node_port";then helper finalize --stage "$stage";return 1;fi
+  fi
+  apply_options+=("ipv6-install:$node_port")
+ fi
+ apply_stage "${apply_options[@]}" || { error '安装失败，原配置已保留或回退。' 'Install failed; previous configuration retained or restored.'; return 1; }
  show_nodes
 }
 show_parameters(){
@@ -1095,7 +1125,7 @@ q. Exit'
   # Read-only views reuse a brief in-memory snapshot; management actions refresh it.
   case $choice in a|A|1|d|D|4|e|E|5|f|F|6|h|H|8|j|J|10|k|K|11|l|L|12|m|M|13|n|N|14|o|O|15) OVERVIEW_CACHE_AT=-10;; esac
   case $choice in
-   a|A|1) install_node || error '操作未完成或已取消；失败原因见上方提示。' 'Operation did not complete or was cancelled; see the reason above.';;
+   a|A|1) install_node standard || error '操作未完成或已取消；失败原因见上方提示。' 'Operation did not complete or was cancelled; see the reason above.';;
    b|B|2) show_nodes || error '无法读取节点，配置和导出文件未修改；请检查上方提示。' 'Cannot read nodes; configuration and exports are unchanged. Inspect the output above.';; c|C|3) qr_nodes || true;; d|D|4) run_submenu service_menu;; e|E|5) run_submenu edit_nodes;;
    f|F|6) update_core || error '核心更新失败，已保留或回退原核心。' 'Core update failed; previous core retained or restored.';;
    g|G|7) make_backup || true;; h|H|8) restore_backup || error '恢复失败，原配置已保留或回退。' 'Restore failed; previous configuration retained or restored.';;
