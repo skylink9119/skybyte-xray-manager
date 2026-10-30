@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.29
+VERSION=0.1.30
 CORE_VERSION=v26.10.29
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -78,7 +78,7 @@ show_startup_info(){
 # shellcheck shell=bash
 ipv6_engine(){
  python3 - xray "$SKYBYTE_XRAY_DIR" '' "$@" <<'PY_IPV6'
-"""Native IPv6 backup checks. No downloads, routing changes, or credential output."""
+"""Native IPv6 installation/backup checks. No downloads or routing changes."""
 import ipaddress
 import json
 import pathlib
@@ -150,9 +150,11 @@ def ipv6_firewall():
                             env={**os.environ, 'LC_ALL': 'C'})
     if result.returncode:
         raise ValueError('无法读取 UFW 状态 / Cannot inspect UFW')
-    if 'Status: active' not in result.stdout:
+    if result.stdout.startswith('Status: inactive'):
         print('提示：UFW 未启用，请配置防火墙 / UFW is inactive; configure your firewall')
         return
+    if not result.stdout.startswith('Status: active'):
+        raise ValueError('无法识别 UFW 状态 / Cannot determine UFW status')
     import re
     if not re.search(r'^IPV6\s*=\s*["\x27]?yes["\x27]?\s*(?:#.*)?$', pathlib.Path('/etc/default/ufw').read_text(), re.M | re.I):
         raise ValueError('UFW 已启用但未管理 IPv6；请先设置 IPV6=yes 并核对 SSH 的 IPv6 放行规则 / Active UFW does not manage IPv6; enable IPV6=yes and verify IPv6 SSH rules first')
@@ -225,6 +227,10 @@ def ipv6_cli(project, root, conf, action, value=''):
         if not values:
             raise ValueError('VPS 未发现可用的原生公网 IPv6；请先向服务商开通 / No native public IPv6; provision it with your VPS provider first')
         print('\n'.join(values))
+    elif action == 'check-install':
+        # A new IPv6 node has no state/configuration yet. Do not load or change it.
+        ipv6_local(value)
+        ipv6_firewall()
     elif action == 'check':
         ipv6_local(value)
         listeners = ipv6_listeners(project, root, conf)
@@ -234,6 +240,15 @@ def ipv6_cli(project, root, conf, action, value=''):
         ipv6_firewall()
     elif action == 'ready':
         ipv6_ready(ipv6_listeners(project, root, conf, users=False))
+    elif action == 'ready-install':
+        number = int(value)
+        if not 1 <= number <= 65535:
+            raise ValueError('Invalid IPv6 listener port')
+        listeners = [item for item in ipv6_listeners(project, root, conf, users=False)
+                     if item['listen'] == '::' and item['port'] == number]
+        if not listeners:
+            raise ValueError('New IPv6 listener missing')
+        ipv6_ready(listeners)
     elif action == 'status':
         state = json.loads((pathlib.Path(root) / 'state.json').read_text())
         states = list(state['nodes'].values()) if project == 'xray' else [state]
@@ -250,6 +265,31 @@ try:ipv6_cli(*sys.argv[1:])
 except (ValueError,OSError,KeyError,subprocess.SubprocessError) as error:
  print(str(error),file=sys.stderr);sys.exit(1)
 PY_IPV6
+}
+ipv6_install_address(){
+ local candidates selected
+ if ! command -v ip >/dev/null;then
+  say '正在安装 IPv6 检测依赖 iproute2……' 'Installing iproute2 for IPv6 checks…' >&2
+  apt_refresh >&2 && apt-get install -y iproute2 >&2 || return 1
+  command -v ip >/dev/null || { error '安装后仍找不到 ip，请检查 PATH。' 'ip is still missing; inspect PATH.';return 1; }
+ fi
+ candidates=$(ipv6_engine detect) || return 1
+ say '本机可用公网 IPv6：' 'Available native IPv6:' >&2
+ printf '%s\n' "$candidates" >&2
+ selected=$(ask '节点 IPv6（回车使用第一个；输入 0 取消）：' 'Node IPv6 (Enter uses first; 0 cancels): ') || return 1
+ [[ $selected != 0 ]] || return 2
+ selected=${selected:-${candidates%%$'\n'*}}
+ ipv6_engine check-install "$selected" >&2 || return 1
+ printf '%s\n' "$selected"
+}
+ipv6_install_menu(){
+ local choice
+ if [[ $# == 0 || $1 == --menu ]];then
+  menu '搭建 IPv6 节点（客户端需支持 IPv6）\n1. VLESS + Reality + Vision（TCP）\n2. VLESS + XHTTP + Reality（TCP）\n3. VLESS + XHTTP + TLS（直连）\n0. 返回' 'Install IPv6 nodes (client IPv6 required)\n1. VLESS + Reality + Vision (TCP)\n2. VLESS + XHTTP + Reality (TCP)\n3. VLESS + XHTTP + TLS (direct)\n0. Back'
+  [[ ${1:-} != --menu ]] || return 0
+  choice=$(ask '> ' '> ') || return 0
+ else choice=$1;fi
+ case $choice in 1|2|3)install_node ipv6 "$choice";;0)return 0;;*)return 1;;esac
 }
 ipv6_menu(){
  local choice candidates selected stage readiness=no
@@ -320,7 +360,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.29"
+VERSION = "0.1.30"
 CORE_VERSION = "v26.10.29"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -2262,7 +2302,10 @@ PY
    if systemctl is-active --quiet skybyte-xray.service; then running=1; break; fi
   done
   (( running )) || return 1
-  [[ $readiness != ipv6 ]] || ipv6_engine ready || return 1
+  case $readiness in
+   ipv6) ipv6_engine ready || return 1;;
+   ipv6-install:*) ipv6_engine ready-install "${readiness#*:}" || return 1;;
+  esac
  fi
  helper finalize --stage "$stage" || return 1
  accepted=1
@@ -2606,20 +2649,35 @@ installation_check_menu(){
 }
 install_node(){
  local choice kind node_name node_port host sni target listen path='' mode=auto cert='' private_key='' stage
- local flags=()
- menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. 节点安装前检测（不安装）\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. Node installation checks (no installation)\n0. Back'
- choice=$(ask '> ' '> ') || return 1
- case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 4) run_submenu installation_check_menu;return;; 0) return 0;; *) return 1;; esac
+ local ipv6_install=${1:-} ipv6_status ipv6_ufw_status
+ local flags=() apply_options=()
+ if [[ $ipv6_install == ipv6 ]];then
+  choice=${2:-0}
+  case $choice in 1|2|3);;0)return 0;;*)return 1;;esac
+ else
+  menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. 节点安装前检测（不安装）\n5. 搭建 IPv6 节点\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. Node installation checks (no installation)\n5. Install IPv6 nodes\n0. Back'
+  choice=$(ask '> ' '> ') || return 1
+ fi
+ case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 4) run_submenu installation_check_menu;return;; 5) run_submenu ipv6_install_menu;return;; 0) return 0;; *) return 1;; esac
+ if [[ $ipv6_install == ipv6 ]];then
+  if ! command -v ip >/dev/null;then install_environment_check "$kind" || return 1;fi
+  host=$(ipv6_install_address) || { ipv6_status=$?;[[ $ipv6_status == 2 ]] && return 0;return 1; }
+  listen=::
+  warn '使用所选 IPv6 作为节点连接地址，监听支持双栈。客户端网络必须支持 IPv6，云安全组和系统防火墙需放行 IPv6 TCP 端口。纯 IPv6 VPS 访问 IPv4 网站需要另行配置可用出站。已有同协议节点请用 l → 9 增加 IPv6 备用入口。' 'The selected IPv6 is the client address with a dual-stack listener. Client IPv6 and provider/host IPv6 TCP rules are required. IPv6-only VPSs need a separate working egress for IPv4-only sites. Use l → 9 for IPv6 backups on an existing protocol.'
+ fi
  node_name=$(ask '节点名称 [SKYBYTE]：' 'Node name [SKYBYTE]: ') || return 1; node_name=${node_name:-SKYBYTE}-$kind
+ [[ $ipv6_install != ipv6 ]] || node_name+=-IPv6
  node_port=$(ask "监听 TCP 端口 [$node_port]：" "TCP listen port [$node_port]: ") || return 1
  case $kind in vision|xhttp-reality) node_port=${node_port:-443};; *) node_port=${node_port:-2053};; esac
- listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 1
- case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
- while :; do
-  host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
-  [[ $host =~ [^[:space:]] ]] && break
-  warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
- done
+ if [[ $ipv6_install != ipv6 ]];then
+  listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 1
+  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
+  while :; do
+   host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
+   [[ $host =~ [^[:space:]] ]] && break
+   warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
+  done
+ fi
  helper preflight --port "$node_port" --listen "$listen" --address "$host" --name "$node_name" --kind "$kind" || return 1
  install_environment_check "$kind" && install_port_check "$node_port" "$listen" || return 1
  if [[ $kind == xhttp-tls ]]; then
@@ -2628,9 +2686,11 @@ install_node(){
   private_key=$(ask '私钥文件绝对路径（不修改源文件）：' 'Absolute private-key path (source is preserved): ') || return 1
   helper tls-input --sni "$sni" --cert "$cert" --key "$private_key" || return 1
   local cdn
-  cdn=$(ask '通过 CDN 连接？[y/N]：' 'Use a CDN? [y/N]: ') || return 1
-  if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
-  warn 'CDN 的 DNS、HTTPS 端口及回源 TLS 验证须在提供商后台配置。' 'Configure CDN DNS, supported HTTPS port and verified origin TLS at your provider.'
+  if [[ $ipv6_install != ipv6 ]];then
+   cdn=$(ask '通过 CDN 连接？[y/N]：' 'Use a CDN? [y/N]: ') || return 1
+   if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
+   warn 'CDN 的 DNS、HTTPS 端口及回源 TLS 验证须在提供商后台配置。' 'Configure CDN DNS, supported HTTPS port and verified origin TLS at your provider.'
+  fi
  else
   sni=$(choose_reality_sni) || return 1
   [[ -n $sni ]] || return 0
@@ -2655,7 +2715,17 @@ install_node(){
  else flags+=(--target "$target"); fi
  [[ $kind != xhttp-* ]] || flags+=(--path "$path" --mode "$mode")
  stage=$(helper prepare "${flags[@]}") || { error '节点配置准备失败，具体原因见上方提示。' 'Node configuration preparation failed; see the reason above.'; return 1; }
- apply_stage "$stage" yes || { error '安装失败，原配置已保留或回退。' 'Install failed; previous configuration retained or restored.'; return 1; }
+ apply_options=("$stage" yes)
+ if [[ $ipv6_install == ipv6 ]];then
+  if ! ipv6_engine check-install "$host";then helper finalize --stage "$stage";return 1;fi
+  if ! ipv6_ufw_status=$(helper ufw-state);then helper finalize --stage "$stage";return 1;fi
+  if [[ $ipv6_ufw_status == active ]];then
+   warn '先放行新端口；后续安装失败时，新增放行规则会保留，请自行核对。' 'Allowing the new port first; added rules remain if installation later fails. Review them if needed.'
+   if ! helper firewall-allow --ports "$node_port";then helper finalize --stage "$stage";return 1;fi
+  fi
+  apply_options+=("ipv6-install:$node_port")
+ fi
+ apply_stage "${apply_options[@]}" || { error '安装失败，原配置已保留或回退。' 'Install failed; previous configuration retained or restored.'; return 1; }
  show_nodes
 }
 show_parameters(){

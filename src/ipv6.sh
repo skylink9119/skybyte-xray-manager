@@ -8,6 +8,31 @@ except (ValueError,OSError,KeyError,subprocess.SubprocessError) as error:
  print(str(error),file=sys.stderr);sys.exit(1)
 PY_IPV6
 }
+ipv6_install_address(){
+ local candidates selected
+ if ! command -v ip >/dev/null;then
+  say '正在安装 IPv6 检测依赖 iproute2……' 'Installing iproute2 for IPv6 checks…' >&2
+  apt_refresh >&2 && apt-get install -y iproute2 >&2 || return 1
+  command -v ip >/dev/null || { error '安装后仍找不到 ip，请检查 PATH。' 'ip is still missing; inspect PATH.';return 1; }
+ fi
+ candidates=$(ipv6_engine detect) || return 1
+ say '本机可用公网 IPv6：' 'Available native IPv6:' >&2
+ printf '%s\n' "$candidates" >&2
+ selected=$(ask '节点 IPv6（回车使用第一个；输入 0 取消）：' 'Node IPv6 (Enter uses first; 0 cancels): ') || return 1
+ [[ $selected != 0 ]] || return 2
+ selected=${selected:-${candidates%%$'\n'*}}
+ ipv6_engine check-install "$selected" >&2 || return 1
+ printf '%s\n' "$selected"
+}
+ipv6_install_menu(){
+ local choice
+ if [[ $# == 0 || $1 == --menu ]];then
+  menu '搭建 IPv6 节点（客户端需支持 IPv6）\n1. VLESS + Reality + Vision（TCP）\n2. VLESS + XHTTP + Reality（TCP）\n3. VLESS + XHTTP + TLS（直连）\n0. 返回' 'Install IPv6 nodes (client IPv6 required)\n1. VLESS + Reality + Vision (TCP)\n2. VLESS + XHTTP + Reality (TCP)\n3. VLESS + XHTTP + TLS (direct)\n0. Back'
+  [[ ${1:-} != --menu ]] || return 0
+  choice=$(ask '> ' '> ') || return 0
+ else choice=$1;fi
+ case $choice in 1|2|3)install_node ipv6 "$choice";;0)return 0;;*)return 1;;esac
+}
 ipv6_menu(){
  local choice candidates selected stage readiness=no
  if [[ $# == 0 || $1 == --menu ]];then

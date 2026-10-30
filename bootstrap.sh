@@ -18,7 +18,7 @@
  fi
  staging=$(mktemp -d "${TMPDIR:-/tmp}/skybyte-xray-bootstrap.XXXXXX")
  trap 'rm -rf -- "$staging"' EXIT
- curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 2 --connect-timeout 10 --max-time 120 'https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.29/install.sh' -o "$staging/install.sh"
+ curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 2 --connect-timeout 10 --max-time 120 'https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.30/install.sh' -o "$staging/install.sh"
  if [[ -s $staging/install.sh ]] && head -n 1 "$staging/install.sh" | grep -Fxq '#!/usr/bin/env bash' && bash -n "$staging/install.sh";then :;else
   printf 'Invalid installer download / 安装脚本为空或格式错误，已停止执行\n' >&2;exit 1
  fi
