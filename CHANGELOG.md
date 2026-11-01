@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.34
+
+- Show explicit configuration-check results, preserve core errors, and report missing configuration/binary without silently returning to the menu.
+
 ## 0.1.33
 
 - Split the Python backend into responsibility-based source components; preserve standalone installation and existing command behavior.
