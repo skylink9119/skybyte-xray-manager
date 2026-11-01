@@ -1,5 +1,7 @@
 # SKYBYTE Xray Manager
 
+本次检查修复错误状态被吞掉及模块末尾引用漏检；详见[检查记录](docs/AUDIT-2026-11-01.md)。
+
 [English](README_EN.md) · [YouTube](https://www.youtube.com/@SKYBYTE9119)
 
 如果这个脚本对你有帮助，欢迎[订阅我的 YouTube 频道 SKYBYTE](https://www.youtube.com/@SKYBYTE9119)，支持后续维护与更新！
@@ -28,9 +30,9 @@
 
 ---
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.31**，默认核心 **v26.10.31**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.32**，默认核心 **v26.10.31**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
-v0.1.31 将 Bash 操作拆分到 lib/ 与 modules/，保留独立安装包和现有菜单；新增端口、重复安装及卸载测试入口。默认官方核心 v26.10.31。
+v0.1.32 将 Bash 操作拆分到 lib/ 与 modules/，保留独立安装包和现有菜单；新增端口、重复安装及卸载测试入口。默认官方核心 v26.10.31。
 
 ## 修改节点端口
 
@@ -181,7 +183,7 @@ bash install.sh
 
 ## 更新管理脚本
 
-菜单 **m** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 `y` 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.31 安装命令更新一次，之后即可使用菜单 m。
+菜单 **m** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 `y` 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.32 安装命令更新一次，之后即可使用菜单 m。
 
 下载固定仓库、指定版本的主脚本与 `SHA256SUMS`，核对 GitHub 发布附件的 SHA256 及清单，并检查 Bash 语法、版本和自检结果。通过后在同一目录原子替换，旧脚本保留为 `manager.previous.sh`；替换后自检失败时回退，若回退无法写入则明确报错并保留备份。拒绝未托管目录、异常文件或符号链接。网络/API 限额、附件缺失、校验错误和写入权限不足会停止更新；不会改写节点配置、UUID、密钥、语言、Xray 核心、服务、防火墙或 BBR 参数。
 

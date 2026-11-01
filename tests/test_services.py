@@ -61,6 +61,15 @@ p.write_text(json.dumps(x));sys.exit(result)
             env=self.env,capture_output=True,text=True)
 
 class ServiceTests(ServiceFixture):
+    def test_qr_missing_export_or_encoder_failure_is_not_hidden(self):
+        command='helper(){ :; };qrencode(){ return 7; };if qr_nodes; then echo BAD; else echo FAILED; fi'
+        result=self.shell(command)
+        self.assertIn('FAILED',result.stdout)
+        (self.root/'nodes.txt').write_text('vless://test@example.invalid:443\n')
+        result=self.shell(command)
+        self.assertIn('FAILED',result.stdout)
+        self.assertNotIn('BAD',result.stdout)
+
     def test_main_edit_menu_keeps_credentials_across_consecutive_edits(self):
         old=self.installed();self.set_controller(active=True)
         new_port=free_port()
