@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.33
+
+- Split the Python backend into responsibility-based source components; preserve standalone installation and existing command behavior.
+- Validate Python composition before building and include backend sources in release archives.
+
 ## 0.1.32 — 2026-11-01
 
 - Propagate QR encoder and missing export errors to the caller.
