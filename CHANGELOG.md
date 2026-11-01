@@ -2,6 +2,8 @@
 
 ## 0.1.31 — 2026-11-01
 
+- Default core is now official v26.10.31; upstream withdrew v26.10.29. Existing cores are updated explicitly through menu f.
+
 - Split Bash source into shared `lib/` and feature `modules/` files; keep a standalone installed payload.
 - Validate module includes and package all required source modules.
 - Add focused port, reinstall and uninstall test commands and module documentation.

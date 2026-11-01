@@ -28,9 +28,9 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.31**, pinned core **v26.10.29**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.31**, pinned core **v26.10.31**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
-v0.1.31 separates Bash operations into lib/ and modules/, retaining standalone payloads and existing menus. Port, reinstall and uninstall test entry points are included. The default official core is v26.10.29.
+v0.1.31 separates Bash operations into lib/ and modules/, retaining standalone payloads and existing menus. Port, reinstall and uninstall test entry points are included. The default official core is v26.10.31.
 
 ## Change node port
 
@@ -52,7 +52,7 @@ Open **l → 9**: `1` status, `2` detect and enable, `3` remove backup. Existing
 
 WARP/WireGuard and TUN tunnel interfaces are excluded: an egress address is not a public ingress address. Requires native public IPv6 and a usable route on the VPS, plus client IPv6. No default-route changes or firewall disable. Active UFW must manage IPv6; allow actual IPv6 TCP ports in your provider firewall. Local checks do not prove public connectivity, and IPv6 can also be restricted. Exports remain private on the VPS; install a firewall and protect credentials.
 
-The default official core is [v26.10.29](https://github.com/XTLS/Xray-core/releases/tag/v26.10.29). Update the manager with **m**. Existing binaries are not silently replaced by a manager update: use **f** and accept the v26.10.29 default to update the core. Official Freedom private/reserved-address protections are retained; no private-target exceptions are added to production configs.
+The default official core is [v26.10.31](https://github.com/XTLS/Xray-core/releases/tag/v26.10.31). Update the manager with **m**. Existing binaries are not silently replaced by a manager update: use **f** and accept the v26.10.31 default to update the core. Official Freedom private/reserved-address protections are retained; no private-target exceptions are added to production configs.
 
 ## Startup overview
 

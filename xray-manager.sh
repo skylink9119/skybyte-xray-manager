@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 VERSION=0.1.31
-CORE_VERSION=v26.10.29
+CORE_VERSION=v26.10.31
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
 SKYBYTE_XRAY_BINARY=${SKYBYTE_XRAY_BINARY:-$SKYBYTE_XRAY_LIB/xray}
@@ -55,7 +55,7 @@ import zipfile
 from pathlib import Path
 
 VERSION = "0.1.31"
-CORE_VERSION = "v26.10.29"
+CORE_VERSION = "v26.10.31"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
 KINDS = ("vision", "xhttp-reality", "xhttp-tls")
