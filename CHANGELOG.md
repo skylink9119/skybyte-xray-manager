@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.32 — 2026-11-01
+
+- Propagate QR encoder and missing export errors to the caller.
+- Validate module includes at EOF even without a trailing newline.
+- Add failure-path regressions and the audit record; default core remains v26.10.31.
+
 ## 0.1.31 — 2026-11-01
 
 - Default core is now official v26.10.31; upstream withdrew v26.10.29. Existing cores are updated explicitly through menu f.

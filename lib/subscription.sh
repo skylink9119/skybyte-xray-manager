@@ -22,6 +22,6 @@ qr_nodes(){
   apt_refresh && apt-get install -y qrencode || return 1
  fi
  local uri
- while IFS= read -r uri; do [[ -z $uri ]] || { separator; printf '%s' "$uri" | qrencode -t ANSIUTF8; }; done < "$SKYBYTE_XRAY_DIR/nodes.txt"
+ while IFS= read -r uri; do [[ -z $uri ]] || { separator; printf '%s' "$uri" | qrencode -t ANSIUTF8 || return 1; }; done < "$SKYBYTE_XRAY_DIR/nodes.txt" || return 1
  warn 'XHTTP 扫码需要客户端本身支持 XHTTP；二维码不改变兼容性。' 'XHTTP QR import requires an XHTTP-capable client.'
 }
