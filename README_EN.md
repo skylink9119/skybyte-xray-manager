@@ -28,9 +28,9 @@ Another option: **[AkileCloud](https://akile.ai/register?aff_code=0be67084-ae2e-
 
 ---
 
-An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.30**, pinned core **v26.10.29**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
+An independent Bash manager for official Xray-core on Ubuntu/Debian. Version **0.1.31**, pinned core **v26.10.29**. Chinese and English interfaces. Separate configuration, binary and service paths allow coexistence with SKYBYTE's sing-box manager when ports do not conflict.
 
-v0.1.30 adds independent IPv6 installation through a → 5. Direct port editing through e → 5 remains available. The official core remains v26.10.29.
+v0.1.31 separates Bash operations into lib/ and modules/, retaining standalone payloads and existing menus. Port, reinstall and uninstall test entry points are included. The default official core is v26.10.29.
 
 ## Change node port
 
@@ -177,7 +177,7 @@ The installer offers Reality handshake presets for TCP/Reality and XHTTP/Reality
 
 ## Manager self-update
 
-Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.30 installer once to obtain this menu.
+Menu **m** checks this project's latest stable GitHub Release, displays the current/available version and asks for `y` before updating the installed `/usr/local/lib/skybyte-xray/manager.sh`. Preview, equal and older versions are refused, including when an old running copy targets a newer installation. Users of v0.1.3 and earlier must run the v0.1.31 installer once to obtain this menu.
 
 The updater downloads the selected release's manager and `SHA256SUMS` from the fixed project repository, verifies GitHub asset SHA256 values and the manifest, then checks Bash syntax, version and self-check output. It replaces the installed file atomically, retaining the old bytes in `manager.previous.sh`. Failed post-install checks trigger rollback; rollback write failure reports the retained backup. Foreign directories/files and symlinks are refused. Network/API limits, missing assets, integrity failures and permission errors stop the update. Node configurations, credentials, language, Xray-core, services, firewall and BBR settings are retained.
 
@@ -247,15 +247,15 @@ For early development installs, updating the manager does not rewrite the runnin
 
 ## Development and validation
 
-Edit src/manager.sh and src/core.py. Build the standalone distribution with:
+Keep configuration and module composition in `src/manager.sh`, shared UI/detection/firewall/service/subscription/backup/menu functions in `lib/`, and installation/Reality/WARP/IPv6 features in `modules/`. `src/core.py` retains configuration, downloads, transactions and diagnostics. The generated `xray-manager.sh` embeds every module and runs without the source tree. See the [module development guide](docs/MODULES.md).
 
 ```bash
 python3 scripts/build.py
 python3 scripts/build.py --check
 bash -n install.sh
-bash -n src/manager.sh
+for file in src/*.sh lib/*.sh modules/*.sh tests/*.sh; do bash -n "$file"; done
 bash -n xray-manager.sh
-shellcheck install.sh src/manager.sh xray-manager.sh
+shellcheck install.sh bootstrap.sh src/quickstart.sh src/bootstrap.sh xray-manager.sh tests/*.sh
 bash xray-manager.sh --self-check
 XRAY_BIN=/absolute/path/to/verified/xray python3 -m unittest discover -s tests -v
 ```

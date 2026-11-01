@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# SKYBYTE Xray Manager standalone; generated from src/manager.sh and src/core.py.
+# SKYBYTE Xray Manager standalone; generated from src/, lib/ and modules/.
 # Copyright (C) 2026 SKYBYTE (skylink9119)
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.30
+VERSION=0.1.31
 CORE_VERSION=v26.10.29
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -18,314 +18,8 @@ GREEN='' YELLOW='' RED='' CYAN='' RESET=''
 if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
  GREEN=$'\033[1;32m'; YELLOW=$'\033[1;33m'; RED=$'\033[1;31m'; CYAN=$'\033[1;36m'; RESET=$'\033[0m'
 fi
-say(){ if [[ $LANGUAGE == en ]]; then printf '%s\n' "$2"; else printf '%s\n' "$1"; fi; }
-menu(){ printf '%s' "$GREEN"; if [[ $LANGUAGE == en ]]; then printf '%b\n' "$2"; else printf '%b\n' "$1"; fi; printf '%s' "$RESET"; }
-warn(){ printf '%s' "$YELLOW"; say "$1" "$2"; printf '%s' "$RESET"; }
-error(){ printf '%s' "$RED" >&2; say "$1" "$2" >&2; printf '%s' "$RESET" >&2; }
-ask(){
- local result
- printf '%s' "$GREEN" >&2
- if [[ $LANGUAGE == en ]]; then printf '%s' "$2" >&2; else printf '%s' "$1" >&2; fi
- printf '%s' "$RESET" >&2
- IFS= read -r result || return 1
- printf '%s' "$result"
-}
-confirmed(){ [[ $1 =~ ^[[:space:]]*[Yy][[:space:]]*$ ]]; }
-confirm(){ local answer; answer=$(ask "$1 [y/N]：" "$2 [y/N]: ") || return 1; confirmed "$answer"; }
-# Keep report commands attached to the terminal (vnStat live mode needs a TTY).
-report_output(){
- local report_status=0 report_reset=$RESET
- if [[ ! -t 1 || -n ${NO_COLOR:-} ]];then "$@";return $?;fi
- printf '%s' "$YELLOW"
- local GREEN=$YELLOW RED=$YELLOW CYAN=$YELLOW RESET=$YELLOW
- (
-  export NO_COLOR=1 SYSTEMD_COLORS=0 CLICOLOR=0
-  "$@"
- ) || report_status=$?
- printf '%s' "$report_reset"
- return "$report_status"
-}
-separator(){ printf '%s\n' '------------------------------------------------------------'; }
-show_banner(){
- printf '%s\n============================================================\n' "$CYAN"
- cat <<'LOGO'
-   ███████╗██╗  ██╗██╗   ██╗██████╗ ██╗   ██╗████████╗███████╗
-   ██╔════╝██║ ██╔╝╚██╗ ██╔╝██╔══██╗╚██╗ ██╔╝╚══██╔══╝██╔════╝
-   ███████╗█████╔╝  ╚████╔╝ ██████╔╝ ╚████╔╝    ██║   █████╗
-   ╚════██║██╔═██╗   ╚██╔╝  ██╔══██╗  ╚██╔╝     ██║   ██╔══╝
-   ███████║██║  ██╗   ██║   ██████╔╝   ██║      ██║   ███████╗
-   ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═════╝    ╚═╝      ╚═╝   ╚══════╝
-LOGO
- printf '               SKYBYTE Xray Manager v%s\n                Reality · Vision · XHTTP\n' "$VERSION"
- printf '============================================================%s\n' "$RESET"
-}
-OVERVIEW_CACHE=''
-OVERVIEW_CACHE_AT=-10
-OVERVIEW_CACHE_LANGUAGE=''
-show_startup_info(){
- if [[ $OVERVIEW_CACHE_LANGUAGE != "$LANGUAGE" ]] || (( SECONDS - OVERVIEW_CACHE_AT >= 5 )); then
-  if ! OVERVIEW_CACHE=$(helper overview --language "$LANGUAGE"); then
-   OVERVIEW_CACHE=$(say '状态概览暂不可用，可通过菜单 d 或 l 查看详情。' 'Overview unavailable; use menu d or l for details.')
-  fi
-  OVERVIEW_CACHE_AT=$SECONDS
-  OVERVIEW_CACHE_LANGUAGE=$LANGUAGE
- fi
- separator
- report_output printf '%s\n' "$OVERVIEW_CACHE"
- separator
-}
 
-# shellcheck shell=bash
-ipv6_engine(){
- python3 - xray "$SKYBYTE_XRAY_DIR" '' "$@" <<'PY_IPV6'
-"""Native IPv6 installation/backup checks. No downloads or routing changes."""
-import ipaddress
-import json
-import pathlib
-import socket
-import subprocess
-import time
-
-
-def public_ipv6(value):
-    if isinstance(value, str) and "%" in value:
-        raise ValueError("Scoped IPv6 is not a public entry address")
-    try:
-        address = ipaddress.IPv6Address(value)
-    except (ValueError, TypeError):
-        raise ValueError('请输入公网 IPv6，不含方括号、端口或网卡后缀 / Enter a public IPv6 without brackets, port or scope') from None
-    if not address.is_global or address.is_multicast or address.ipv4_mapped or address.is_reserved:
-        raise ValueError('需要原生公网 IPv6，不能使用回环、内网或映射地址 / Native public IPv6 required')
-    return str(address)
-
-
-def ipv6_candidates():
-    result = subprocess.run(['ip', '-j', '-d', '-6', 'addr', 'show', 'scope', 'global'],
-                            capture_output=True, text=True, check=True, timeout=4)
-    candidates = []
-    for interface in json.loads(result.stdout):
-        if 'UP' not in interface.get('flags', []):
-            continue
-        # WARP/WireGuard/TUN egress addresses do not provide public ingress.
-        # Detailed link metadata avoids treating those addresses as native VPS IPs.
-        kind = interface.get('linkinfo', {}).get('info_kind', '')
-        if kind in {'wireguard', 'tun', 'tap', 'sit', 'ip6tnl', 'ipip', 'gre', 'gretap', 'ip6gre', 'ip6gretap', 'vti', 'vti6'} or interface.get('link_type') in {'none', 'sit', 'ip6tnl', 'ipip', 'gre', 'tunnel6'}:
-            continue
-        for item in interface.get('addr_info', []):
-            if item.get('family') != 'inet6' or item.get('scope') != 'global':
-                continue
-            flags = set(item.get('flags', []))
-            if flags & {'tentative', 'dadfailed', 'deprecated', 'temporary'} or any(item.get(k) for k in ('tentative', 'dadfailed', 'deprecated', 'temporary')) or item.get('preferred_life_time') == 0:
-                continue
-            try:
-                value = public_ipv6(item['local'])
-            except ValueError:
-                continue
-            if value not in candidates:
-                candidates.append(value)
-    return candidates
-
-
-def ipv6_local(value):
-    value = public_ipv6(value)
-    if value not in ipv6_candidates():
-        raise ValueError('IPv6 未配置在本机可用网卡，或地址尚未就绪 / IPv6 is not assigned and ready on this VPS')
-    result = subprocess.run(['ip', '-6', 'route', 'get', '2606:4700:4700::1111', 'from', value],
-                            capture_output=True, text=True, check=True, timeout=3)
-    if not result.stdout.strip() or any(word in result.stdout.split() for word in ('unreachable', 'prohibit', 'blackhole')):
-        raise ValueError('没有可用的 IPv6 路由 / No usable IPv6 route')
-    with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as probe:
-        probe.bind((value, 0))
-    return value
-
-
-def ipv6_firewall():
-    """UFW must manage IPv6 when active; never silently edit/reload SSH policy."""
-    import os
-    import shutil
-    if not shutil.which('ufw'):
-        print('提示：未安装 UFW，请安装防火墙并放行 SSH 和节点端口 / Install a firewall; allow SSH and node ports')
-        return
-    result = subprocess.run(['ufw', 'status'], capture_output=True, text=True, timeout=5,
-                            env={**os.environ, 'LC_ALL': 'C'})
-    if result.returncode:
-        raise ValueError('无法读取 UFW 状态 / Cannot inspect UFW')
-    if result.stdout.startswith('Status: inactive'):
-        print('提示：UFW 未启用，请配置防火墙 / UFW is inactive; configure your firewall')
-        return
-    if not result.stdout.startswith('Status: active'):
-        raise ValueError('无法识别 UFW 状态 / Cannot determine UFW status')
-    import re
-    if not re.search(r'^IPV6\s*=\s*["\x27]?yes["\x27]?\s*(?:#.*)?$', pathlib.Path('/etc/default/ufw').read_text(), re.M | re.I):
-        raise ValueError('UFW 已启用但未管理 IPv6；请先设置 IPV6=yes 并核对 SSH 的 IPv6 放行规则 / Active UFW does not manage IPv6; enable IPV6=yes and verify IPv6 SSH rules first')
-
-
-def ipv6_bind_check(listeners):
-    for item in listeners:
-        if item['listen'] not in ('0.0.0.0', '::') or item.get('ipv6_only'):
-            raise ValueError('仅支持公网通配监听，拒绝更改回环或 IPv6-only 节点 / Public wildcard listeners required; loopback/IPv6-only nodes are preserved')
-        if item['listen'] == '::':
-            continue
-        transport = socket.SOCK_DGRAM if item['protocol'] == 'udp' else socket.SOCK_STREAM
-        with socket.socket(socket.AF_INET6, transport) as probe:
-            # The current IPv4 listener remains running during preflight.
-            probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-            probe.bind(('::', item['port']))
-
-
-def ipv6_listeners(project, root, conf=None, users=True):
-    root = pathlib.Path(root)
-    state = json.loads((root / 'state.json').read_text())
-    if project == 'xray':
-        return [{'listen': n['listen'], 'port': n['port'], 'protocol': 'tcp'}
-                for n in state['nodes'].values() if not n.get('cdn')]
-    configs = [pathlib.Path(conf)]
-    ledger = root / 'users.json'
-    if users and ledger.exists():
-        for user in json.loads(ledger.read_text())['users']:
-            if not user.get('deleted'):
-                identity = user['id']
-                import re
-                if not re.fullmatch('[0-9a-f]{16}', identity):
-                    raise ValueError('Invalid managed user ID')
-                configs.append(root / 'users' / identity / 'server.json')
-    listeners = []
-    for filename in configs:
-        for inbound in json.loads(filename.read_text())['inbounds']:
-            if inbound['type'] in ('vless', 'hysteria2'):
-                listeners.append({'listen': inbound['listen'], 'port': inbound['listen_port'],
-                                  'protocol': 'udp' if inbound['type'] == 'hysteria2' else 'tcp',
-                                  'ipv6_only': inbound.get('ipv6_only', False)})
-    return listeners
-
-
-def ipv6_ready(listeners):
-    """Local TCP dual-stack and UDP6 listener checks; not a public ingress test."""
-    deadline = time.monotonic() + 5
-    while True:
-        try:
-            for item in listeners:
-                if item['protocol'] == 'tcp':
-                    for host in ('127.0.0.1', '::1'):
-                        with socket.create_connection((host, item['port']), timeout=.3):
-                            pass
-                else:
-                    result = subprocess.run(['ss', '-H', '-lnu6'], capture_output=True, text=True, check=True, timeout=2)
-                    endpoints = [line.split()[3] for line in result.stdout.splitlines() if len(line.split()) > 4]
-                    if not any(endpoint.rsplit(':', 1)[-1] == str(item['port']) and endpoint.rsplit(':', 1)[0] in ('*', '[::]', '::') for endpoint in endpoints):
-                        raise ValueError('IPv6 UDP listener missing')
-            return
-        except (OSError, ValueError, subprocess.SubprocessError):
-            if time.monotonic() >= deadline:
-                raise ValueError('双栈监听检查失败；恢复原配置 / Dual-stack listener check failed; restoring the previous configuration') from None
-            time.sleep(.2)
-
-
-def ipv6_cli(project, root, conf, action, value=''):
-    if action == 'detect':
-        values = ipv6_candidates()
-        if not values:
-            raise ValueError('VPS 未发现可用的原生公网 IPv6；请先向服务商开通 / No native public IPv6; provision it with your VPS provider first')
-        print('\n'.join(values))
-    elif action == 'check-install':
-        # A new IPv6 node has no state/configuration yet. Do not load or change it.
-        ipv6_local(value)
-        ipv6_firewall()
-    elif action == 'check':
-        ipv6_local(value)
-        listeners = ipv6_listeners(project, root, conf)
-        if not listeners:
-            raise ValueError('没有可用的直连节点；Argo/CDN 节点保持不变 / No direct nodes; Argo/CDN nodes are preserved')
-        ipv6_bind_check(listeners)
-        ipv6_firewall()
-    elif action == 'ready':
-        ipv6_ready(ipv6_listeners(project, root, conf, users=False))
-    elif action == 'ready-install':
-        number = int(value)
-        if not 1 <= number <= 65535:
-            raise ValueError('Invalid IPv6 listener port')
-        listeners = [item for item in ipv6_listeners(project, root, conf, users=False)
-                     if item['listen'] == '::' and item['port'] == number]
-        if not listeners:
-            raise ValueError('New IPv6 listener missing')
-        ipv6_ready(listeners)
-    elif action == 'status':
-        state = json.loads((pathlib.Path(root) / 'state.json').read_text())
-        states = list(state['nodes'].values()) if project == 'xray' else [state]
-        for node in states:
-            backup = node.get('ipv6_backup')
-            print(node.get('name', node.get('node_name', 'SKYBYTE')) + ': ' +
-                  ('IPv6 备用已配置 / IPv6 backup configured: ' + backup['address'] if backup else '未配置 IPv6 备用 / IPv6 backup not configured'))
-        print('客户端网络也必须支持 IPv6；本机检查不等于公网可达。请放行云防火墙的实际 IPv6 TCP/UDP 端口。\nClient IPv6 is required; local checks do not prove public reachability. Allow the actual IPv6 TCP/UDP ports in your provider firewall.')
-    else:
-        raise ValueError('Invalid IPv6 action')
-
-import sys
-try:ipv6_cli(*sys.argv[1:])
-except (ValueError,OSError,KeyError,subprocess.SubprocessError) as error:
- print(str(error),file=sys.stderr);sys.exit(1)
-PY_IPV6
-}
-ipv6_install_address(){
- local candidates selected
- if ! command -v ip >/dev/null;then
-  say '正在安装 IPv6 检测依赖 iproute2……' 'Installing iproute2 for IPv6 checks…' >&2
-  apt_refresh >&2 && apt-get install -y iproute2 >&2 || return 1
-  command -v ip >/dev/null || { error '安装后仍找不到 ip，请检查 PATH。' 'ip is still missing; inspect PATH.';return 1; }
- fi
- candidates=$(ipv6_engine detect) || return 1
- say '本机可用公网 IPv6：' 'Available native IPv6:' >&2
- printf '%s\n' "$candidates" >&2
- selected=$(ask '节点 IPv6（回车使用第一个；输入 0 取消）：' 'Node IPv6 (Enter uses first; 0 cancels): ') || return 1
- [[ $selected != 0 ]] || return 2
- selected=${selected:-${candidates%%$'\n'*}}
- ipv6_engine check-install "$selected" >&2 || return 1
- printf '%s\n' "$selected"
-}
-ipv6_install_menu(){
- local choice
- if [[ $# == 0 || $1 == --menu ]];then
-  menu '搭建 IPv6 节点（客户端需支持 IPv6）\n1. VLESS + Reality + Vision（TCP）\n2. VLESS + XHTTP + Reality（TCP）\n3. VLESS + XHTTP + TLS（直连）\n0. 返回' 'Install IPv6 nodes (client IPv6 required)\n1. VLESS + Reality + Vision (TCP)\n2. VLESS + XHTTP + Reality (TCP)\n3. VLESS + XHTTP + TLS (direct)\n0. Back'
-  [[ ${1:-} != --menu ]] || return 0
-  choice=$(ask '> ' '> ') || return 0
- else choice=$1;fi
- case $choice in 1|2|3)install_node ipv6 "$choice";;0)return 0;;*)return 1;;esac
-}
-ipv6_menu(){
- local choice candidates selected stage readiness=no
- if [[ $# == 0 || $1 == --menu ]];then
-  menu 'IPv6 备用入口\n1 查看 IPv6 备用状态\n2 检测并启用 IPv6 备用入口\n3 移除 IPv6 备用入口（保留原节点）\n0 返回' 'IPv6 backup entry\n1 Show IPv6 backup status\n2 Detect and enable IPv6 backup\n3 Remove IPv6 backup (keep original nodes)\n0 Back'
-  [[ ${1:-} != --menu ]] || return 0
-  choice=$(ask '> ' '> ') || return 0
- else choice=$1;fi
- case $choice in
-  1) report_output ipv6_engine status;;
-  2)
-   candidates=$(ipv6_engine detect) || return 1
-   say "本机可用公网 IPv6：" "Available native IPv6:"
-   printf '%s\n' "$candidates"
-   selected=$(ask '备用 IPv6（回车使用第一个）：' 'Backup IPv6 (Enter uses first): ') || return 0
-   selected=${selected:-${candidates%%$'\n'*}}
-   helper node-ports >/dev/null && ipv6_engine check "$selected" || return 1
-   warn '保留原地址、UUID、密钥、端口和 SNI，启用双栈监听并额外导出 IPv6 备用节点；CDN 节点保持不变。客户端网络必须支持 IPv6，云防火墙需放行实际 IPv6 端口。参数及链接保存在当前 VPS，请勿公开。' 'Keeps original addresses, UUIDs, keys, ports and SNI. Enables dual-stack and exports IPv6 backup nodes; CDN nodes are preserved. Client IPv6 and provider IPv6 firewall rules are required. Exports remain private on this VPS.'
-   confirm '启用 IPv6 备用入口并重载正在运行的节点？' 'Enable IPv6 backup and reload running nodes?' || return 0
-   stage=$(helper ipv6-prepare --address "$selected") || return 1
-   readiness=ipv6
-   apply_stage "$stage" no "$readiness" || return 1
-   if [[ $(helper ufw-state) == active ]];then
-    helper firewall-allow || return 1
-   fi
-   report_output ipv6_engine status
-   say '重新导入节点后选择“IPv6备用”。已验证本地监听；公网连通需从有 IPv6 的客户端测试。未运行的服务保持停止。' 'Re-import and select the IPv6 backup node. Local listeners checked; test public ingress from an IPv6 client. Stopped services remain stopped.';;
-  3)
-   confirm '移除 IPv6 备用链接并恢复启用前的监听方式？原节点凭据保持不变。' 'Remove IPv6 backup links and restore previous listeners, keeping credentials?' || return 0
-   stage=$(helper ipv6-prepare --disable) || return 1
-   apply_stage "$stage" || return 1
-   report_output ipv6_engine status;;
-  0) return 0;;*) return 1;;
- esac
-}
-
+# Source composition only. VPS installations use the generated standalone payload.
 helper(){ python3 - "$@" <<'SKYBYTE_PYTHON'
 # Copyright (C) 2026 SKYBYTE (skylink9119)
 # SPDX-License-Identifier: GPL-3.0-only
@@ -360,7 +54,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.30"
+VERSION = "0.1.31"
 CORE_VERSION = "v26.10.29"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -2156,29 +1850,286 @@ if __name__ == "__main__":
 SKYBYTE_PYTHON
 }
 
+# shellcheck shell=bash
+ipv6_engine(){
+ python3 - xray "$SKYBYTE_XRAY_DIR" '' "$@" <<'PY_IPV6'
+"""Native IPv6 installation/backup checks. No downloads or routing changes."""
+import ipaddress
+import json
+import pathlib
+import socket
+import subprocess
+import time
 
-environment_check(){
- (( EUID == 0 )) || { error '请以 root 账户运行。' 'Run as root.'; return 1; }
- [[ $(uname -s) == Linux && -d /run/systemd/system ]] || { error '需要 Linux 和 systemd。' 'Linux with systemd is required.'; return 1; }
- [[ -r /etc/os-release ]] || return 1
- local os_id
- os_id=$(awk -F= '$1=="ID" {gsub(/"/,"",$2);print $2}' /etc/os-release)
- [[ $os_id == ubuntu || $os_id == debian ]] || { error '仅支持 Ubuntu/Debian。' 'Ubuntu/Debian only.'; return 1; }
+
+def public_ipv6(value):
+    if isinstance(value, str) and "%" in value:
+        raise ValueError("Scoped IPv6 is not a public entry address")
+    try:
+        address = ipaddress.IPv6Address(value)
+    except (ValueError, TypeError):
+        raise ValueError('请输入公网 IPv6，不含方括号、端口或网卡后缀 / Enter a public IPv6 without brackets, port or scope') from None
+    if not address.is_global or address.is_multicast or address.ipv4_mapped or address.is_reserved:
+        raise ValueError('需要原生公网 IPv6，不能使用回环、内网或映射地址 / Native public IPv6 required')
+    return str(address)
+
+
+def ipv6_candidates():
+    result = subprocess.run(['ip', '-j', '-d', '-6', 'addr', 'show', 'scope', 'global'],
+                            capture_output=True, text=True, check=True, timeout=4)
+    candidates = []
+    for interface in json.loads(result.stdout):
+        if 'UP' not in interface.get('flags', []):
+            continue
+        # WARP/WireGuard/TUN egress addresses do not provide public ingress.
+        # Detailed link metadata avoids treating those addresses as native VPS IPs.
+        kind = interface.get('linkinfo', {}).get('info_kind', '')
+        if kind in {'wireguard', 'tun', 'tap', 'sit', 'ip6tnl', 'ipip', 'gre', 'gretap', 'ip6gre', 'ip6gretap', 'vti', 'vti6'} or interface.get('link_type') in {'none', 'sit', 'ip6tnl', 'ipip', 'gre', 'tunnel6'}:
+            continue
+        for item in interface.get('addr_info', []):
+            if item.get('family') != 'inet6' or item.get('scope') != 'global':
+                continue
+            flags = set(item.get('flags', []))
+            if flags & {'tentative', 'dadfailed', 'deprecated', 'temporary'} or any(item.get(k) for k in ('tentative', 'dadfailed', 'deprecated', 'temporary')) or item.get('preferred_life_time') == 0:
+                continue
+            try:
+                value = public_ipv6(item['local'])
+            except ValueError:
+                continue
+            if value not in candidates:
+                candidates.append(value)
+    return candidates
+
+
+def ipv6_local(value):
+    value = public_ipv6(value)
+    if value not in ipv6_candidates():
+        raise ValueError('IPv6 未配置在本机可用网卡，或地址尚未就绪 / IPv6 is not assigned and ready on this VPS')
+    result = subprocess.run(['ip', '-6', 'route', 'get', '2606:4700:4700::1111', 'from', value],
+                            capture_output=True, text=True, check=True, timeout=3)
+    if not result.stdout.strip() or any(word in result.stdout.split() for word in ('unreachable', 'prohibit', 'blackhole')):
+        raise ValueError('没有可用的 IPv6 路由 / No usable IPv6 route')
+    with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as probe:
+        probe.bind((value, 0))
+    return value
+
+
+def ipv6_firewall():
+    """UFW must manage IPv6 when active; never silently edit/reload SSH policy."""
+    import os
+    import shutil
+    if not shutil.which('ufw'):
+        print('提示：未安装 UFW，请安装防火墙并放行 SSH 和节点端口 / Install a firewall; allow SSH and node ports')
+        return
+    result = subprocess.run(['ufw', 'status'], capture_output=True, text=True, timeout=5,
+                            env={**os.environ, 'LC_ALL': 'C'})
+    if result.returncode:
+        raise ValueError('无法读取 UFW 状态 / Cannot inspect UFW')
+    if result.stdout.startswith('Status: inactive'):
+        print('提示：UFW 未启用，请配置防火墙 / UFW is inactive; configure your firewall')
+        return
+    if not result.stdout.startswith('Status: active'):
+        raise ValueError('无法识别 UFW 状态 / Cannot determine UFW status')
+    import re
+    if not re.search(r'^IPV6\s*=\s*["\x27]?yes["\x27]?\s*(?:#.*)?$', pathlib.Path('/etc/default/ufw').read_text(), re.M | re.I):
+        raise ValueError('UFW 已启用但未管理 IPv6；请先设置 IPV6=yes 并核对 SSH 的 IPv6 放行规则 / Active UFW does not manage IPv6; enable IPV6=yes and verify IPv6 SSH rules first')
+
+
+def ipv6_bind_check(listeners):
+    for item in listeners:
+        if item['listen'] not in ('0.0.0.0', '::') or item.get('ipv6_only'):
+            raise ValueError('仅支持公网通配监听，拒绝更改回环或 IPv6-only 节点 / Public wildcard listeners required; loopback/IPv6-only nodes are preserved')
+        if item['listen'] == '::':
+            continue
+        transport = socket.SOCK_DGRAM if item['protocol'] == 'udp' else socket.SOCK_STREAM
+        with socket.socket(socket.AF_INET6, transport) as probe:
+            # The current IPv4 listener remains running during preflight.
+            probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            probe.bind(('::', item['port']))
+
+
+def ipv6_listeners(project, root, conf=None, users=True):
+    root = pathlib.Path(root)
+    state = json.loads((root / 'state.json').read_text())
+    if project == 'xray':
+        return [{'listen': n['listen'], 'port': n['port'], 'protocol': 'tcp'}
+                for n in state['nodes'].values() if not n.get('cdn')]
+    configs = [pathlib.Path(conf)]
+    ledger = root / 'users.json'
+    if users and ledger.exists():
+        for user in json.loads(ledger.read_text())['users']:
+            if not user.get('deleted'):
+                identity = user['id']
+                import re
+                if not re.fullmatch('[0-9a-f]{16}', identity):
+                    raise ValueError('Invalid managed user ID')
+                configs.append(root / 'users' / identity / 'server.json')
+    listeners = []
+    for filename in configs:
+        for inbound in json.loads(filename.read_text())['inbounds']:
+            if inbound['type'] in ('vless', 'hysteria2'):
+                listeners.append({'listen': inbound['listen'], 'port': inbound['listen_port'],
+                                  'protocol': 'udp' if inbound['type'] == 'hysteria2' else 'tcp',
+                                  'ipv6_only': inbound.get('ipv6_only', False)})
+    return listeners
+
+
+def ipv6_ready(listeners):
+    """Local TCP dual-stack and UDP6 listener checks; not a public ingress test."""
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            for item in listeners:
+                if item['protocol'] == 'tcp':
+                    for host in ('127.0.0.1', '::1'):
+                        with socket.create_connection((host, item['port']), timeout=.3):
+                            pass
+                else:
+                    result = subprocess.run(['ss', '-H', '-lnu6'], capture_output=True, text=True, check=True, timeout=2)
+                    endpoints = [line.split()[3] for line in result.stdout.splitlines() if len(line.split()) > 4]
+                    if not any(endpoint.rsplit(':', 1)[-1] == str(item['port']) and endpoint.rsplit(':', 1)[0] in ('*', '[::]', '::') for endpoint in endpoints):
+                        raise ValueError('IPv6 UDP listener missing')
+            return
+        except (OSError, ValueError, subprocess.SubprocessError):
+            if time.monotonic() >= deadline:
+                raise ValueError('双栈监听检查失败；恢复原配置 / Dual-stack listener check failed; restoring the previous configuration') from None
+            time.sleep(.2)
+
+
+def ipv6_cli(project, root, conf, action, value=''):
+    if action == 'detect':
+        values = ipv6_candidates()
+        if not values:
+            raise ValueError('VPS 未发现可用的原生公网 IPv6；请先向服务商开通 / No native public IPv6; provision it with your VPS provider first')
+        print('\n'.join(values))
+    elif action == 'check-install':
+        # A new IPv6 node has no state/configuration yet. Do not load or change it.
+        ipv6_local(value)
+        ipv6_firewall()
+    elif action == 'check':
+        ipv6_local(value)
+        listeners = ipv6_listeners(project, root, conf)
+        if not listeners:
+            raise ValueError('没有可用的直连节点；Argo/CDN 节点保持不变 / No direct nodes; Argo/CDN nodes are preserved')
+        ipv6_bind_check(listeners)
+        ipv6_firewall()
+    elif action == 'ready':
+        ipv6_ready(ipv6_listeners(project, root, conf, users=False))
+    elif action == 'ready-install':
+        number = int(value)
+        if not 1 <= number <= 65535:
+            raise ValueError('Invalid IPv6 listener port')
+        listeners = [item for item in ipv6_listeners(project, root, conf, users=False)
+                     if item['listen'] == '::' and item['port'] == number]
+        if not listeners:
+            raise ValueError('New IPv6 listener missing')
+        ipv6_ready(listeners)
+    elif action == 'status':
+        state = json.loads((pathlib.Path(root) / 'state.json').read_text())
+        states = list(state['nodes'].values()) if project == 'xray' else [state]
+        for node in states:
+            backup = node.get('ipv6_backup')
+            print(node.get('name', node.get('node_name', 'SKYBYTE')) + ': ' +
+                  ('IPv6 备用已配置 / IPv6 backup configured: ' + backup['address'] if backup else '未配置 IPv6 备用 / IPv6 backup not configured'))
+        print('客户端网络也必须支持 IPv6；本机检查不等于公网可达。请放行云防火墙的实际 IPv6 TCP/UDP 端口。\nClient IPv6 is required; local checks do not prove public reachability. Allow the actual IPv6 TCP/UDP ports in your provider firewall.')
+    else:
+        raise ValueError('Invalid IPv6 action')
+
+import sys
+try:ipv6_cli(*sys.argv[1:])
+except (ValueError,OSError,KeyError,subprocess.SubprocessError) as error:
+ print(str(error),file=sys.stderr);sys.exit(1)
+PY_IPV6
 }
-apt_refresh(){
- if ! apt-get -o APT::Update::Error-Mode=any update; then
-  error 'APT 索引更新失败，请先修复软件源，再重试。' 'APT index refresh failed; fix repository errors before retrying.'
-  return 1
+ipv6_install_address(){
+ local candidates selected
+ if ! command -v ip >/dev/null;then
+  say '正在安装 IPv6 检测依赖 iproute2……' 'Installing iproute2 for IPv6 checks…' >&2
+  apt_refresh >&2 && apt-get install -y iproute2 >&2 || return 1
+  command -v ip >/dev/null || { error '安装后仍找不到 ip，请检查 PATH。' 'ip is still missing; inspect PATH.';return 1; }
  fi
+ candidates=$(ipv6_engine detect) || return 1
+ say '本机可用公网 IPv6：' 'Available native IPv6:' >&2
+ printf '%s\n' "$candidates" >&2
+ selected=$(ask '节点 IPv6（回车使用第一个；输入 0 取消）：' 'Node IPv6 (Enter uses first; 0 cancels): ') || return 1
+ [[ $selected != 0 ]] || return 2
+ selected=${selected:-${candidates%%$'\n'*}}
+ ipv6_engine check-install "$selected" >&2 || return 1
+ printf '%s\n' "$selected"
 }
-dependencies(){
- local tool missing=0
- for tool in python3 openssl curl flock; do command -v "$tool" >/dev/null || missing=1; done
- if (( missing )); then
-  confirm '安装缺少的系统依赖？' 'Install missing system dependencies?' || return 1
-  apt_refresh && apt-get install -y python3 openssl curl ca-certificates util-linux || return 1
- fi
+ipv6_install_menu(){
+ local choice
+ if [[ $# == 0 || $1 == --menu ]];then
+  menu '搭建 IPv6 节点（客户端需支持 IPv6）\n1. VLESS + Reality + Vision（TCP）\n2. VLESS + XHTTP + Reality（TCP）\n3. VLESS + XHTTP + TLS（直连）\n0. 返回' 'Install IPv6 nodes (client IPv6 required)\n1. VLESS + Reality + Vision (TCP)\n2. VLESS + XHTTP + Reality (TCP)\n3. VLESS + XHTTP + TLS (direct)\n0. Back'
+  [[ ${1:-} != --menu ]] || return 0
+  choice=$(ask '> ' '> ') || return 0
+ else choice=$1;fi
+ case $choice in 1|2|3)install_node ipv6 "$choice";;0)return 0;;*)return 1;;esac
 }
+ipv6_menu(){
+ local choice candidates selected stage readiness=no
+ if [[ $# == 0 || $1 == --menu ]];then
+  menu 'IPv6 备用入口\n1 查看 IPv6 备用状态\n2 检测并启用 IPv6 备用入口\n3 移除 IPv6 备用入口（保留原节点）\n0 返回' 'IPv6 backup entry\n1 Show IPv6 backup status\n2 Detect and enable IPv6 backup\n3 Remove IPv6 backup (keep original nodes)\n0 Back'
+  [[ ${1:-} != --menu ]] || return 0
+  choice=$(ask '> ' '> ') || return 0
+ else choice=$1;fi
+ case $choice in
+  1) report_output ipv6_engine status;;
+  2)
+   candidates=$(ipv6_engine detect) || return 1
+   say "本机可用公网 IPv6：" "Available native IPv6:"
+   printf '%s\n' "$candidates"
+   selected=$(ask '备用 IPv6（回车使用第一个）：' 'Backup IPv6 (Enter uses first): ') || return 0
+   selected=${selected:-${candidates%%$'\n'*}}
+   helper node-ports >/dev/null && ipv6_engine check "$selected" || return 1
+   warn '保留原地址、UUID、密钥、端口和 SNI，启用双栈监听并额外导出 IPv6 备用节点；CDN 节点保持不变。客户端网络必须支持 IPv6，云防火墙需放行实际 IPv6 端口。参数及链接保存在当前 VPS，请勿公开。' 'Keeps original addresses, UUIDs, keys, ports and SNI. Enables dual-stack and exports IPv6 backup nodes; CDN nodes are preserved. Client IPv6 and provider IPv6 firewall rules are required. Exports remain private on this VPS.'
+   confirm '启用 IPv6 备用入口并重载正在运行的节点？' 'Enable IPv6 backup and reload running nodes?' || return 0
+   stage=$(helper ipv6-prepare --address "$selected") || return 1
+   readiness=ipv6
+   apply_stage "$stage" no "$readiness" || return 1
+   if [[ $(helper ufw-state) == active ]];then
+    helper firewall-allow || return 1
+   fi
+   report_output ipv6_engine status
+   say '重新导入节点后选择“IPv6备用”。已验证本地监听；公网连通需从有 IPv6 的客户端测试。未运行的服务保持停止。' 'Re-import and select the IPv6 backup node. Local listeners checked; test public ingress from an IPv6 client. Stopped services remain stopped.';;
+  3)
+   confirm '移除 IPv6 备用链接并恢复启用前的监听方式？原节点凭据保持不变。' 'Remove IPv6 backup links and restore previous listeners, keeping credentials?' || return 0
+   stage=$(helper ipv6-prepare --disable) || return 1
+   apply_stage "$stage" || return 1
+   report_output ipv6_engine status;;
+  0) return 0;;*) return 1;;
+ esac
+}
+
+# lib/common.sh — build-time module; assembled by scripts/build.py.
+say(){ if [[ $LANGUAGE == en ]]; then printf '%s\n' "$2"; else printf '%s\n' "$1"; fi; }
+menu(){ printf '%s' "$GREEN"; if [[ $LANGUAGE == en ]]; then printf '%b\n' "$2"; else printf '%b\n' "$1"; fi; printf '%s' "$RESET"; }
+warn(){ printf '%s' "$YELLOW"; say "$1" "$2"; printf '%s' "$RESET"; }
+error(){ printf '%s' "$RED" >&2; say "$1" "$2" >&2; printf '%s' "$RESET" >&2; }
+ask(){
+ local result
+ printf '%s' "$GREEN" >&2
+ if [[ $LANGUAGE == en ]]; then printf '%s' "$2" >&2; else printf '%s' "$1" >&2; fi
+ printf '%s' "$RESET" >&2
+ IFS= read -r result || return 1
+ printf '%s' "$result"
+}
+confirmed(){ [[ $1 =~ ^[[:space:]]*[Yy][[:space:]]*$ ]]; }
+confirm(){ local answer; answer=$(ask "$1 [y/N]：" "$2 [y/N]: ") || return 1; confirmed "$answer"; }
+# Keep report commands attached to the terminal (vnStat live mode needs a TTY).
+report_output(){
+ local report_status=0 report_reset=$RESET
+ if [[ ! -t 1 || -n ${NO_COLOR:-} ]];then "$@";return $?;fi
+ printf '%s' "$YELLOW"
+ local GREEN=$YELLOW RED=$YELLOW CYAN=$YELLOW RESET=$YELLOW
+ (
+  export NO_COLOR=1 SYSTEMD_COLORS=0 CLICOLOR=0
+  "$@"
+ ) || report_status=$?
+ printf '%s' "$report_reset"
+ return "$report_status"
+}
+separator(){ printf '%s\n' '------------------------------------------------------------'; }
 acquire_lock(){
  [[ ! -L $SKYBYTE_XRAY_LOCK && ( ! -e $SKYBYTE_XRAY_LOCK || -f $SKYBYTE_XRAY_LOCK ) ]] || return 1
  exec 9>"$SKYBYTE_XRAY_LOCK"
@@ -2219,123 +2170,43 @@ os.chmod(p,0o700)
 if not marker.exists(): marker.write_text('SKYBYTE-XRAY/1\n');os.chmod(marker,0o600)
 PY
 }
-core_asset(){
- case $(uname -m) in x86_64|amd64) printf 'Xray-linux-64.zip';; aarch64|arm64) printf 'Xray-linux-arm64-v8a.zip';;
- *) error '首版支持 amd64 / arm64。' 'This version supports amd64 / arm64.'; return 1;; esac
+# lib/detect.sh — build-time module; assembled by scripts/build.py.
+show_banner(){
+ printf '%s\n============================================================\n' "$CYAN"
+ cat <<'LOGO'
+   ███████╗██╗  ██╗██╗   ██╗██████╗ ██╗   ██╗████████╗███████╗
+   ██╔════╝██║ ██╔╝╚██╗ ██╔╝██╔══██╗╚██╗ ██╔╝╚══██╔══╝██╔════╝
+   ███████╗█████╔╝  ╚████╔╝ ██████╔╝ ╚████╔╝    ██║   █████╗
+   ╚════██║██╔═██╗   ╚██╔╝  ██╔══██╗  ╚██╔╝     ██║   ██╔══╝
+   ███████║██║  ██╗   ██║   ██████╔╝   ██║      ██║   ███████╗
+   ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═════╝    ╚═╝      ╚═╝   ╚══════╝
+LOGO
+ printf '               SKYBYTE Xray Manager v%s\n                Reality · Vision · XHTTP\n' "$VERSION"
+ printf '============================================================%s\n' "$RESET"
 }
-ensure_binary(){
- helper guard && lib_guard || return 1
- if [[ ! -x $SKYBYTE_XRAY_BINARY ]]; then
-  local candidate asset
-  asset=$(core_asset) || return 1
-  candidate=$(mktemp "$SKYBYTE_XRAY_LIB/.download.XXXXXX") || return 1
-  say '正在下载并校验官方 Xray 核心……' 'Downloading and verifying official Xray-core…'
-  if ! helper download --file "$candidate" --asset "$asset" --tag "$CORE_VERSION"; then rm -f -- "$candidate"; return 1; fi
-  if ! "$candidate" version >/dev/null; then rm -f -- "$candidate"; return 1; fi
-  mv -f -- "$candidate" "$SKYBYTE_XRAY_BINARY" || return 1
- fi
- [[ ! -L $SKYBYTE_XRAY_DIR/language ]] || return 1
- printf '%s\n' "$LANGUAGE" > "$SKYBYTE_XRAY_DIR/language"
-}
-restore_service(){
- local active=$1 enabled=$2
- systemctl daemon-reload || return 1
- if [[ $enabled == yes ]]; then systemctl enable skybyte-xray.service >/dev/null 2>&1 || return 1
- else systemctl disable skybyte-xray.service >/dev/null 2>&1 || true; fi
- if [[ $active == yes ]]; then systemctl restart skybyte-xray.service || return 1
- else systemctl stop skybyte-xray.service >/dev/null 2>&1 || true; fi
-}
-recover(){
- if [[ -d $SKYBYTE_XRAY_DIR/.transaction ]]; then
-  local flags active enabled
-  warn '恢复未完成的配置事务。' 'Recovering an interrupted configuration transaction.'
-  flags=$(helper journal | python3 -c 'import json,sys;x=json.load(sys.stdin);print("yes" if x["active"] else "no", "yes" if x["enabled"] else "no")') || return 1
-  read -r active enabled <<< "$flags"
-  helper rollback >/dev/null && restore_service "$active" "$enabled" || return 1
- fi
- if [[ -f $SKYBYTE_XRAY_LIB/.old-core ]]; then
-  lib_guard || return 1
-  [[ ! -L $SKYBYTE_XRAY_LIB/.old-core && ! -L $SKYBYTE_XRAY_LIB/.update-active ]] || return 1
-  local previous=no
-  if [[ -f $SKYBYTE_XRAY_LIB/.update-active ]]; then IFS= read -r previous < "$SKYBYTE_XRAY_LIB/.update-active" || true; fi
-  mv -f -- "$SKYBYTE_XRAY_LIB/.old-core" "$SKYBYTE_XRAY_BINARY" || return 1
-  rm -f -- "$SKYBYTE_XRAY_LIB/.update-active"
-  [[ $previous != yes ]] || systemctl restart skybyte-xray.service || return 1
- fi
-}
-apply_stage() (
- local stage=$1 activate=${2:-no} readiness=${3:-no} was_active=no was_enabled=no applied=0 accepted=0
- local flags=(--stage "$stage")
- systemctl is-active --quiet skybyte-xray.service && was_active=yes
- systemctl is-enabled --quiet skybyte-xray.service && was_enabled=yes
- [[ $was_active != yes ]] || flags+=(--active)
- [[ $was_enabled != yes ]] || flags+=(--enabled)
- # shellcheck disable=SC2317,SC2329 # EXIT trap invocation is indirect; rollback tests exercise this function.
- cleanup_stage(){
-  local status=$?
-  if (( applied && ! accepted )); then
-   if helper rollback >/dev/null; then restore_service "$was_active" "$was_enabled" || true
-   else error '回退失败，已保留恢复事务，请勿手动删除。' 'Rollback failed; recovery journal retained.'; fi
+OVERVIEW_CACHE=''
+OVERVIEW_CACHE_AT=-10
+OVERVIEW_CACHE_LANGUAGE=''
+show_startup_info(){
+ if [[ $OVERVIEW_CACHE_LANGUAGE != "$LANGUAGE" ]] || (( SECONDS - OVERVIEW_CACHE_AT >= 5 )); then
+  if ! OVERVIEW_CACHE=$(helper overview --language "$LANGUAGE"); then
+   OVERVIEW_CACHE=$(say '状态概览暂不可用，可通过菜单 d 或 l 查看详情。' 'Overview unavailable; use menu d or l for details.')
   fi
-  if [[ $stage == "$SKYBYTE_XRAY_DIR"/.stage-* && -d $stage && ! -L $stage ]]; then rm -rf -- "$stage"; fi
-  return "$status"
- }
- trap cleanup_stage EXIT
- helper commit "${flags[@]}" || return 1
- applied=1
- systemctl daemon-reload || return 1
- local node_count
- node_count=$(python3 - "$SKYBYTE_XRAY_DIR/state.json" <<'PY'
-import json,sys
-with open(sys.argv[1]) as f: print(len(json.load(f)['nodes']))
-PY
-) || return 1
- if [[ $node_count == 0 ]]; then
-  systemctl stop skybyte-xray.service && systemctl disable skybyte-xray.service >/dev/null 2>&1 || return 1
- elif [[ $activate == yes ]]; then
-  systemctl enable skybyte-xray.service >/dev/null 2>&1 && systemctl restart skybyte-xray.service || return 1
- elif [[ $was_active == yes ]]; then systemctl restart skybyte-xray.service || return 1; fi
- if [[ $node_count != 0 && ( $activate == yes || $was_active == yes ) ]]; then
-  local attempt running=0
-  for ((attempt=0; attempt<5; attempt++)); do
-   sleep 1
-   if systemctl is-active --quiet skybyte-xray.service; then running=1; break; fi
-  done
-  (( running )) || return 1
-  case $readiness in
-   ipv6) ipv6_engine ready || return 1;;
-   ipv6-install:*) ipv6_engine ready-install "${readiness#*:}" || return 1;;
-  esac
+  OVERVIEW_CACHE_AT=$SECONDS
+  OVERVIEW_CACHE_LANGUAGE=$LANGUAGE
  fi
- helper finalize --stage "$stage" || return 1
- accepted=1
-)
-choose_reality_sni(){
- local choice selected
- menu 'Reality 握手域名\n1 Microsoft  www.microsoft.com（默认）\n2 Apple      www.apple.com\n3 Amazon     www.amazon.com\n4 Cloudflare www.cloudflare.com\n5 Google     dl.google.com\n6 自定义域名\n0 返回' 'Reality handshake name\n1 Microsoft  www.microsoft.com (default)\n2 Apple      www.apple.com\n3 Amazon     www.amazon.com\n4 Cloudflare www.cloudflare.com\n5 Google     dl.google.com\n6 Custom domain\n0 Back' >&2
- while :; do
-  choice=$(ask '选择 [1]（也可直接输入域名）：' 'Choose [1] (or enter a domain directly): ') || return 1
-  case ${choice:-1} in
-   1) selected=www.microsoft.com;;
-   2) selected=www.apple.com;;
-   3) selected=www.amazon.com;;
-   4) selected=www.cloudflare.com;;
-   5) selected=dl.google.com;;
-   6) while :; do
-       selected=$(ask '自定义 Reality 握手域名（必填）：' 'Custom Reality handshake domain (required): ') || return 1
-       [[ $selected =~ [^[:space:]] ]] && break
-       warn '请填写握手域名。' 'Enter a handshake domain.' >&2
-      done;;
-   0) return 0;;
-   *) if [[ $choice =~ ^[0-9]+$ ]]; then
-       warn '选项无效，请输入 1–6、0 或域名。' 'Invalid option; enter 1–6, 0 or a domain.' >&2
-       continue
-      fi
-      selected=$choice;;
-  esac
-  printf '%s\n' "$selected"
-  return 0
- done
+ separator
+ report_output printf '%s\n' "$OVERVIEW_CACHE"
+ separator
+}
+
+environment_check(){
+ (( EUID == 0 )) || { error '请以 root 账户运行。' 'Run as root.'; return 1; }
+ [[ $(uname -s) == Linux && -d /run/systemd/system ]] || { error '需要 Linux 和 systemd。' 'Linux with systemd is required.'; return 1; }
+ [[ -r /etc/os-release ]] || return 1
+ local os_id
+ os_id=$(awk -F= '$1=="ID" {gsub(/"/,"",$2);print $2}' /etc/os-release)
+ [[ $os_id == ubuntu || $os_id == debian ]] || { error '仅支持 Ubuntu/Debian。' 'Ubuntu/Debian only.'; return 1; }
 }
 install_check_engine(){ python3 - "$@" <<'PY_INSTALL_CHECKS'
 """Bounded installation diagnostics: no package, firewall or configuration changes."""
@@ -2647,87 +2518,195 @@ installation_check_menu(){
  fi
  install_download_check
 }
-install_node(){
- local choice kind node_name node_port host sni target listen path='' mode=auto cert='' private_key='' stage
- local ipv6_install=${1:-} ipv6_status ipv6_ufw_status
- local flags=() apply_options=()
- if [[ $ipv6_install == ipv6 ]];then
-  choice=${2:-0}
-  case $choice in 1|2|3);;0)return 0;;*)return 1;;esac
- else
-  menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. 节点安装前检测（不安装）\n5. 搭建 IPv6 节点\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. Node installation checks (no installation)\n5. Install IPv6 nodes\n0. Back'
-  choice=$(ask '> ' '> ') || return 1
+# lib/packages.sh — build-time module; assembled by scripts/build.py.
+apt_refresh(){
+ if ! apt-get -o APT::Update::Error-Mode=any update; then
+  error 'APT 索引更新失败，请先修复软件源，再重试。' 'APT index refresh failed; fix repository errors before retrying.'
+  return 1
  fi
- case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 4) run_submenu installation_check_menu;return;; 5) run_submenu ipv6_install_menu;return;; 0) return 0;; *) return 1;; esac
- if [[ $ipv6_install == ipv6 ]];then
-  if ! command -v ip >/dev/null;then install_environment_check "$kind" || return 1;fi
-  host=$(ipv6_install_address) || { ipv6_status=$?;[[ $ipv6_status == 2 ]] && return 0;return 1; }
-  listen=::
-  warn '使用所选 IPv6 作为节点连接地址，监听支持双栈。客户端网络必须支持 IPv6，云安全组和系统防火墙需放行 IPv6 TCP 端口。纯 IPv6 VPS 访问 IPv4 网站需要另行配置可用出站。已有同协议节点请用 l → 9 增加 IPv6 备用入口。' 'The selected IPv6 is the client address with a dual-stack listener. Client IPv6 and provider/host IPv6 TCP rules are required. IPv6-only VPSs need a separate working egress for IPv4-only sites. Use l → 9 for IPv6 backups on an existing protocol.'
- fi
- node_name=$(ask '节点名称 [SKYBYTE]：' 'Node name [SKYBYTE]: ') || return 1; node_name=${node_name:-SKYBYTE}-$kind
- [[ $ipv6_install != ipv6 ]] || node_name+=-IPv6
- node_port=$(ask "监听 TCP 端口 [$node_port]：" "TCP listen port [$node_port]: ") || return 1
- case $kind in vision|xhttp-reality) node_port=${node_port:-443};; *) node_port=${node_port:-2053};; esac
- if [[ $ipv6_install != ipv6 ]];then
-  listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 1
-  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
-  while :; do
-   host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
-   [[ $host =~ [^[:space:]] ]] && break
-   warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
-  done
- fi
- helper preflight --port "$node_port" --listen "$listen" --address "$host" --name "$node_name" --kind "$kind" || return 1
- install_environment_check "$kind" && install_port_check "$node_port" "$listen" || return 1
- if [[ $kind == xhttp-tls ]]; then
-  sni=$(ask '证书域名 / TLS SNI：' 'Certificate domain / TLS SNI: ') || return 1
-  cert=$(ask '已有可信 fullchain 证书文件绝对路径：' 'Absolute path to trusted fullchain certificate: ') || return 1
-  private_key=$(ask '私钥文件绝对路径（不修改源文件）：' 'Absolute private-key path (source is preserved): ') || return 1
-  helper tls-input --sni "$sni" --cert "$cert" --key "$private_key" || return 1
-  local cdn
-  if [[ $ipv6_install != ipv6 ]];then
-   cdn=$(ask '通过 CDN 连接？[y/N]：' 'Use a CDN? [y/N]: ') || return 1
-   if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
-   warn 'CDN 的 DNS、HTTPS 端口及回源 TLS 验证须在提供商后台配置。' 'Configure CDN DNS, supported HTTPS port and verified origin TLS at your provider.'
-  fi
- else
-  sni=$(choose_reality_sni) || return 1
-  [[ -n $sni ]] || return 0
-  target=$(ask "握手目标 [$sni:443]：" "Handshake target [$sni:443]: ") || return 1; target=${target:-$sni:443}
-  install_reality_target "$sni" "$target" || return 1
- fi
- if [[ $kind == xhttp-* ]]; then
-  path=$(ask 'XHTTP 路径（回车自动生成）：' 'XHTTP path (Enter to generate): ') || return 1
-  local selected
-  selected=$(ask "模式 [$mode]（auto / packet-up / stream-up / stream-one）：" "Mode [$mode] (auto / packet-up / stream-up / stream-one): ") || return 1
-  mode=${selected:-$mode}
- fi
- warn '请放行实际 TCP 端口，可用菜单 l 管理系统防火墙；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port using menu l for the host firewall; validation does not prove public/CDN connectivity.'
- if ! confirm '安装并启动所选节点？' 'Install and start the selected node?'; then
-  say '已取消节点安装，未下载核心或更改节点配置。' 'Node installation cancelled; no core download or node configuration changes.'
-  return 0
- fi
- install_download_check || return 1
- ensure_binary || { error '核心准备失败，具体原因见上方提示。' 'Core preparation failed; see the reason above.'; return 1; }
- flags+=(--kind "$kind" --port "$node_port" --listen "$listen" --address "$host" --sni "$sni" --name "$node_name")
- if [[ $kind == xhttp-tls ]]; then flags+=(--cert "$cert" --key "$private_key")
- else flags+=(--target "$target"); fi
- [[ $kind != xhttp-* ]] || flags+=(--path "$path" --mode "$mode")
- stage=$(helper prepare "${flags[@]}") || { error '节点配置准备失败，具体原因见上方提示。' 'Node configuration preparation failed; see the reason above.'; return 1; }
- apply_options=("$stage" yes)
- if [[ $ipv6_install == ipv6 ]];then
-  if ! ipv6_engine check-install "$host";then helper finalize --stage "$stage";return 1;fi
-  if ! ipv6_ufw_status=$(helper ufw-state);then helper finalize --stage "$stage";return 1;fi
-  if [[ $ipv6_ufw_status == active ]];then
-   warn '先放行新端口；后续安装失败时，新增放行规则会保留，请自行核对。' 'Allowing the new port first; added rules remain if installation later fails. Review them if needed.'
-   if ! helper firewall-allow --ports "$node_port";then helper finalize --stage "$stage";return 1;fi
-  fi
-  apply_options+=("ipv6-install:$node_port")
- fi
- apply_stage "${apply_options[@]}" || { error '安装失败，原配置已保留或回退。' 'Install failed; previous configuration retained or restored.'; return 1; }
- show_nodes
 }
+dependencies(){
+ local tool missing=0
+ for tool in python3 openssl curl flock; do command -v "$tool" >/dev/null || missing=1; done
+ if (( missing )); then
+  confirm '安装缺少的系统依赖？' 'Install missing system dependencies?' || return 1
+  apt_refresh && apt-get install -y python3 openssl curl ca-certificates util-linux || return 1
+ fi
+}
+# lib/service.sh — build-time module; assembled by scripts/build.py.
+core_asset(){
+ case $(uname -m) in x86_64|amd64) printf 'Xray-linux-64.zip';; aarch64|arm64) printf 'Xray-linux-arm64-v8a.zip';;
+ *) error '首版支持 amd64 / arm64。' 'This version supports amd64 / arm64.'; return 1;; esac
+}
+ensure_binary(){
+ helper guard && lib_guard || return 1
+ if [[ ! -x $SKYBYTE_XRAY_BINARY ]]; then
+  local candidate asset
+  asset=$(core_asset) || return 1
+  candidate=$(mktemp "$SKYBYTE_XRAY_LIB/.download.XXXXXX") || return 1
+  say '正在下载并校验官方 Xray 核心……' 'Downloading and verifying official Xray-core…'
+  if ! helper download --file "$candidate" --asset "$asset" --tag "$CORE_VERSION"; then rm -f -- "$candidate"; return 1; fi
+  if ! "$candidate" version >/dev/null; then rm -f -- "$candidate"; return 1; fi
+  mv -f -- "$candidate" "$SKYBYTE_XRAY_BINARY" || return 1
+ fi
+ [[ ! -L $SKYBYTE_XRAY_DIR/language ]] || return 1
+ printf '%s\n' "$LANGUAGE" > "$SKYBYTE_XRAY_DIR/language"
+}
+restore_service(){
+ local active=$1 enabled=$2
+ systemctl daemon-reload || return 1
+ if [[ $enabled == yes ]]; then systemctl enable skybyte-xray.service >/dev/null 2>&1 || return 1
+ else systemctl disable skybyte-xray.service >/dev/null 2>&1 || true; fi
+ if [[ $active == yes ]]; then systemctl restart skybyte-xray.service || return 1
+ else systemctl stop skybyte-xray.service >/dev/null 2>&1 || true; fi
+}
+recover(){
+ if [[ -d $SKYBYTE_XRAY_DIR/.transaction ]]; then
+  local flags active enabled
+  warn '恢复未完成的配置事务。' 'Recovering an interrupted configuration transaction.'
+  flags=$(helper journal | python3 -c 'import json,sys;x=json.load(sys.stdin);print("yes" if x["active"] else "no", "yes" if x["enabled"] else "no")') || return 1
+  read -r active enabled <<< "$flags"
+  helper rollback >/dev/null && restore_service "$active" "$enabled" || return 1
+ fi
+ if [[ -f $SKYBYTE_XRAY_LIB/.old-core ]]; then
+  lib_guard || return 1
+  [[ ! -L $SKYBYTE_XRAY_LIB/.old-core && ! -L $SKYBYTE_XRAY_LIB/.update-active ]] || return 1
+  local previous=no
+  if [[ -f $SKYBYTE_XRAY_LIB/.update-active ]]; then IFS= read -r previous < "$SKYBYTE_XRAY_LIB/.update-active" || true; fi
+  mv -f -- "$SKYBYTE_XRAY_LIB/.old-core" "$SKYBYTE_XRAY_BINARY" || return 1
+  rm -f -- "$SKYBYTE_XRAY_LIB/.update-active"
+  [[ $previous != yes ]] || systemctl restart skybyte-xray.service || return 1
+ fi
+}
+apply_stage() (
+ local stage=$1 activate=${2:-no} readiness=${3:-no} was_active=no was_enabled=no applied=0 accepted=0
+ local flags=(--stage "$stage")
+ systemctl is-active --quiet skybyte-xray.service && was_active=yes
+ systemctl is-enabled --quiet skybyte-xray.service && was_enabled=yes
+ [[ $was_active != yes ]] || flags+=(--active)
+ [[ $was_enabled != yes ]] || flags+=(--enabled)
+ # shellcheck disable=SC2317,SC2329 # EXIT trap invocation is indirect; rollback tests exercise this function.
+ cleanup_stage(){
+  local status=$?
+  if (( applied && ! accepted )); then
+   if helper rollback >/dev/null; then restore_service "$was_active" "$was_enabled" || true
+   else error '回退失败，已保留恢复事务，请勿手动删除。' 'Rollback failed; recovery journal retained.'; fi
+  fi
+  if [[ $stage == "$SKYBYTE_XRAY_DIR"/.stage-* && -d $stage && ! -L $stage ]]; then rm -rf -- "$stage"; fi
+  return "$status"
+ }
+ trap cleanup_stage EXIT
+ helper commit "${flags[@]}" || return 1
+ applied=1
+ systemctl daemon-reload || return 1
+ local node_count
+ node_count=$(python3 - "$SKYBYTE_XRAY_DIR/state.json" <<'PY'
+import json,sys
+with open(sys.argv[1]) as f: print(len(json.load(f)['nodes']))
+PY
+) || return 1
+ if [[ $node_count == 0 ]]; then
+  systemctl stop skybyte-xray.service && systemctl disable skybyte-xray.service >/dev/null 2>&1 || return 1
+ elif [[ $activate == yes ]]; then
+  systemctl enable skybyte-xray.service >/dev/null 2>&1 && systemctl restart skybyte-xray.service || return 1
+ elif [[ $was_active == yes ]]; then systemctl restart skybyte-xray.service || return 1; fi
+ if [[ $node_count != 0 && ( $activate == yes || $was_active == yes ) ]]; then
+  local attempt running=0
+  for ((attempt=0; attempt<5; attempt++)); do
+   sleep 1
+   if systemctl is-active --quiet skybyte-xray.service; then running=1; break; fi
+  done
+  (( running )) || return 1
+  case $readiness in
+   ipv6) ipv6_engine ready || return 1;;
+   ipv6-install:*) ipv6_engine ready-install "${readiness#*:}" || return 1;;
+  esac
+ fi
+ helper finalize --stage "$stage" || return 1
+ accepted=1
+)
+service_menu(){
+ helper guard || return 1
+ # --menu renders only; a numeric argument executes one selected operation.
+ if [[ $# == 0 || $1 == --menu ]]; then
+ menu '1. 状态
+2. 启动
+3. 停止
+4. 重启
+5. 配置检查
+6. 日志
+0. 返回' '1. Status
+2. Start
+3. Stop
+4. Restart
+5. Validate
+6. Logs
+0. Back'
+ local choice
+ [[ ${1:-} != --menu ]] || return 0
+ choice=$(ask '> ' '> ') || return 1
+ else
+  choice=$1
+ fi
+ case $choice in
+  1) report_output systemctl status skybyte-xray.service --no-pager || true;;
+  2) systemctl start skybyte-xray.service;; 3) systemctl stop skybyte-xray.service;; 4) systemctl restart skybyte-xray.service;;
+  5) "$SKYBYTE_XRAY_BINARY" run -test -config "$SKYBYTE_XRAY_DIR/config.json";;
+  6) report_output journalctl -u skybyte-xray.service -n 60 --no-pager;; 0) return 0;; *) return 1;;
+ esac
+}
+update_core() (
+ ensure_binary || return 1
+ local tag candidate asset active=no accepted=0 replaced=0
+ tag=$(ask "官方稳定版本 [$CORE_VERSION]：" "Official stable version [$CORE_VERSION]: ") || return 1; tag=${tag:-$CORE_VERSION}
+ confirm '校验并更新核心？运行中的节点会短暂重启。' 'Verify and update core? Active nodes will briefly restart.' || return 1
+ [[ ! -e $SKYBYTE_XRAY_LIB/.old-core && ! -e $SKYBYTE_XRAY_LIB/.update-active ]] || return 1
+ candidate=$(mktemp "$SKYBYTE_XRAY_LIB/.update.XXXXXX") || return 1
+ # shellcheck disable=SC2317,SC2329 # EXIT trap invocation is indirect; rollback tests exercise this function.
+ update_cleanup(){
+  local status=$?
+  if (( ! accepted && replaced )); then
+   mv -f -- "$SKYBYTE_XRAY_LIB/.old-core" "$SKYBYTE_XRAY_BINARY" || return 1
+   [[ $active != yes ]] || systemctl restart skybyte-xray.service || true
+  fi
+  rm -f -- "$candidate"
+  [[ -e $SKYBYTE_XRAY_LIB/.old-core ]] || rm -f -- "$SKYBYTE_XRAY_LIB/.update-active"
+  return "$status"
+ }
+ trap update_cleanup EXIT
+ asset=$(core_asset) || return 1
+ helper download --asset "$asset" --tag "$tag" --file "$candidate" || return 1
+ [[ ! -f $SKYBYTE_XRAY_DIR/config.json ]] || "$candidate" run -test -config "$SKYBYTE_XRAY_DIR/config.json" >/dev/null 2>&1 || return 1
+ systemctl is-active --quiet skybyte-xray.service && active=yes
+ cp -p -- "$SKYBYTE_XRAY_BINARY" "$SKYBYTE_XRAY_LIB/.old-core" || return 1
+ printf '%s\n' "$active" > "$SKYBYTE_XRAY_LIB/.update-active"
+ mv -f -- "$candidate" "$SKYBYTE_XRAY_BINARY" || return 1
+ replaced=1
+ if [[ $active == yes ]]; then
+  systemctl restart skybyte-xray.service || return 1
+  sleep 2
+  systemctl is-active --quiet skybyte-xray.service || return 1
+ fi
+ rm -f -- "$SKYBYTE_XRAY_LIB/.old-core" "$SKYBYTE_XRAY_LIB/.update-active"
+ accepted=1
+)
+update_manager(){
+ local tag
+ say "当前管理脚本：v${VERSION}，正在检查最新正式版……" "Current manager: v$VERSION; checking the latest stable release…"
+ tag=$(helper manager-latest) || return 1
+ if [[ -z $tag ]]; then
+  say '当前版本已不低于最新正式版。' 'The current version is at least as new as the latest stable release.'
+  return 2
+ fi
+ say "可更新到：$tag" "Available update: $tag"
+ confirm '校验并更新管理脚本？节点和核心保持原样，成功后请重新运行 xr。' 'Verify and update the manager? Nodes and core are retained; reopen with xr after success.' || return 2
+ if ! helper manager-update --release "$tag" --file "$SKYBYTE_XRAY_LIB/manager.sh"; then
+  error '管理脚本更新未完成，请检查上方原因；已有备份位于 manager.previous.sh。' 'Manager update did not complete; check the reason above. Any saved backup is manager.previous.sh.'
+  return 1
+ fi
+ say '管理脚本已更新，旧脚本保存为 manager.previous.sh。请重新输入 xr。' 'Manager updated; the old script is saved as manager.previous.sh. Run xr again.'
+}
+# lib/subscription.sh — build-time module; assembled by scripts/build.py.
 show_parameters(){
  report_output helper parameters --language "$LANGUAGE"
 }
@@ -2754,6 +2733,7 @@ qr_nodes(){
  while IFS= read -r uri; do [[ -z $uri ]] || { separator; printf '%s' "$uri" | qrencode -t ANSIUTF8; }; done < "$SKYBYTE_XRAY_DIR/nodes.txt"
  warn 'XHTTP 扫码需要客户端本身支持 XHTTP；二维码不改变兼容性。' 'XHTTP QR import requires an XHTTP-capable client.'
 }
+# lib/configuration.sh — build-time module; assembled by scripts/build.py.
 choose_kind(){
  menu '1. Vision
 2. XHTTP-Reality
@@ -2862,36 +2842,7 @@ edit_node_port(){
  fi
  say '端口已更新；从 b 获取新节点并重新导入客户端，IPv6 备用同步更新。旧防火墙规则保留。' 'Port updated. Get new nodes from b and re-import them; IPv6 backups are updated too. Old firewall rules are retained.'
 }
-service_menu(){
- helper guard || return 1
- # --menu renders only; a numeric argument executes one selected operation.
- if [[ $# == 0 || $1 == --menu ]]; then
- menu '1. 状态
-2. 启动
-3. 停止
-4. 重启
-5. 配置检查
-6. 日志
-0. 返回' '1. Status
-2. Start
-3. Stop
-4. Restart
-5. Validate
-6. Logs
-0. Back'
- local choice
- [[ ${1:-} != --menu ]] || return 0
- choice=$(ask '> ' '> ') || return 1
- else
-  choice=$1
- fi
- case $choice in
-  1) report_output systemctl status skybyte-xray.service --no-pager || true;;
-  2) systemctl start skybyte-xray.service;; 3) systemctl stop skybyte-xray.service;; 4) systemctl restart skybyte-xray.service;;
-  5) "$SKYBYTE_XRAY_BINARY" run -test -config "$SKYBYTE_XRAY_DIR/config.json";;
-  6) report_output journalctl -u skybyte-xray.service -n 60 --no-pager;; 0) return 0;; *) return 1;;
- esac
-}
+# lib/backup.sh — build-time module; assembled by scripts/build.py.
 make_backup(){
  local destination
  destination="$SKYBYTE_XRAY_DIR/backups/backup-$(date +%Y%m%d-%H%M%S)-$RANDOM.tar.gz"
@@ -2907,41 +2858,7 @@ restore_backup(){
  stage=$(helper restore --file "$archive") || return 1
  apply_stage "$stage" || return 1
 }
-update_core() (
- ensure_binary || return 1
- local tag candidate asset active=no accepted=0 replaced=0
- tag=$(ask "官方稳定版本 [$CORE_VERSION]：" "Official stable version [$CORE_VERSION]: ") || return 1; tag=${tag:-$CORE_VERSION}
- confirm '校验并更新核心？运行中的节点会短暂重启。' 'Verify and update core? Active nodes will briefly restart.' || return 1
- [[ ! -e $SKYBYTE_XRAY_LIB/.old-core && ! -e $SKYBYTE_XRAY_LIB/.update-active ]] || return 1
- candidate=$(mktemp "$SKYBYTE_XRAY_LIB/.update.XXXXXX") || return 1
- # shellcheck disable=SC2317,SC2329 # EXIT trap invocation is indirect; rollback tests exercise this function.
- update_cleanup(){
-  local status=$?
-  if (( ! accepted && replaced )); then
-   mv -f -- "$SKYBYTE_XRAY_LIB/.old-core" "$SKYBYTE_XRAY_BINARY" || return 1
-   [[ $active != yes ]] || systemctl restart skybyte-xray.service || true
-  fi
-  rm -f -- "$candidate"
-  [[ -e $SKYBYTE_XRAY_LIB/.old-core ]] || rm -f -- "$SKYBYTE_XRAY_LIB/.update-active"
-  return "$status"
- }
- trap update_cleanup EXIT
- asset=$(core_asset) || return 1
- helper download --asset "$asset" --tag "$tag" --file "$candidate" || return 1
- [[ ! -f $SKYBYTE_XRAY_DIR/config.json ]] || "$candidate" run -test -config "$SKYBYTE_XRAY_DIR/config.json" >/dev/null 2>&1 || return 1
- systemctl is-active --quiet skybyte-xray.service && active=yes
- cp -p -- "$SKYBYTE_XRAY_BINARY" "$SKYBYTE_XRAY_LIB/.old-core" || return 1
- printf '%s\n' "$active" > "$SKYBYTE_XRAY_LIB/.update-active"
- mv -f -- "$candidate" "$SKYBYTE_XRAY_BINARY" || return 1
- replaced=1
- if [[ $active == yes ]]; then
-  systemctl restart skybyte-xray.service || return 1
-  sleep 2
-  systemctl is-active --quiet skybyte-xray.service || return 1
- fi
- rm -f -- "$SKYBYTE_XRAY_LIB/.old-core" "$SKYBYTE_XRAY_LIB/.update-active"
- accepted=1
-)
+# lib/lifecycle.sh — build-time module; assembled by scripts/build.py.
 uninstall(){
  helper guard && lib_guard || return 1
  confirm '备份后卸载 SKYBYTE Xray Manager？' 'Back up and uninstall SKYBYTE Xray Manager?' || return 1
@@ -2977,6 +2894,7 @@ PY
  warn '已卸载。备份、未知文件、系统依赖、防火墙规则和 BBR 设置保留；如需恢复 BBR，请在卸载前使用菜单 l → 8。' 'Removed. Backups, unknown files, dependencies, firewall rules and BBR settings retained; restore BBR with menu l → 8 before uninstalling if needed.'
  exit 0
 }
+# lib/help.sh — build-time module; assembled by scripts/build.py.
 guide(){
  say 'Copyright © 2026 SKYBYTE (skylink9119)。GPLv3，无担保；可按许可证修改和再分发。' 'Copyright © 2026 SKYBYTE (skylink9119). GPLv3, no warranty; modification and redistribution permitted under the license.'
  say '完整许可证：https://github.com/skylink9119/skybyte-xray-manager/blob/main/LICENSE' 'Full license: https://github.com/skylink9119/skybyte-xray-manager/blob/main/LICENSE'
@@ -2990,6 +2908,7 @@ guide(){
  say 'Reality 握手网站检测：主菜单 o，可检查当前节点或自定义目标，也可在检测通过后确认更换；检测通过不代表公网节点已连通。' 'Reality target checks: main menu o, check configured/custom targets or confirm a replacement after checks pass; checks do not prove public node connectivity.'
  say '安装后输入 xr 可重新打开菜单。' 'After installation, run xr to reopen the menu.'
 }
+# lib/firewall.sh — build-time module; assembled by scripts/build.py.
 firewall_open(){
  local value=${1:-} zone
  local flags=()
@@ -3142,22 +3061,437 @@ network_menu(){
   0) return 0;; *) return 1;;
  esac
 }
-update_manager(){
- local tag
- say "当前管理脚本：v${VERSION}，正在检查最新正式版……" "Current manager: v$VERSION; checking the latest stable release…"
- tag=$(helper manager-latest) || return 1
- if [[ -z $tag ]]; then
-  say '当前版本已不低于最新正式版。' 'The current version is at least as new as the latest stable release.'
-  return 2
- fi
- say "可更新到：$tag" "Available update: $tag"
- confirm '校验并更新管理脚本？节点和核心保持原样，成功后请重新运行 xr。' 'Verify and update the manager? Nodes and core are retained; reopen with xr after success.' || return 2
- if ! helper manager-update --release "$tag" --file "$SKYBYTE_XRAY_LIB/manager.sh"; then
-  error '管理脚本更新未完成，请检查上方原因；已有备份位于 manager.previous.sh。' 'Manager update did not complete; check the reason above. Any saved backup is manager.previous.sh.'
-  return 1
- fi
- say '管理脚本已更新，旧脚本保存为 manager.previous.sh。请重新输入 xr。' 'Manager updated; the old script is saved as manager.previous.sh. Run xr again.'
+# modules/reality.sh — build-time module; assembled by scripts/build.py.
+choose_reality_sni(){
+ local choice selected
+ menu 'Reality 握手域名\n1 Microsoft  www.microsoft.com（默认）\n2 Apple      www.apple.com\n3 Amazon     www.amazon.com\n4 Cloudflare www.cloudflare.com\n5 Google     dl.google.com\n6 自定义域名\n0 返回' 'Reality handshake name\n1 Microsoft  www.microsoft.com (default)\n2 Apple      www.apple.com\n3 Amazon     www.amazon.com\n4 Cloudflare www.cloudflare.com\n5 Google     dl.google.com\n6 Custom domain\n0 Back' >&2
+ while :; do
+  choice=$(ask '选择 [1]（也可直接输入域名）：' 'Choose [1] (or enter a domain directly): ') || return 1
+  case ${choice:-1} in
+   1) selected=www.microsoft.com;;
+   2) selected=www.apple.com;;
+   3) selected=www.amazon.com;;
+   4) selected=www.cloudflare.com;;
+   5) selected=dl.google.com;;
+   6) while :; do
+       selected=$(ask '自定义 Reality 握手域名（必填）：' 'Custom Reality handshake domain (required): ') || return 1
+       [[ $selected =~ [^[:space:]] ]] && break
+       warn '请填写握手域名。' 'Enter a handshake domain.' >&2
+      done;;
+   0) return 0;;
+   *) if [[ $choice =~ ^[0-9]+$ ]]; then
+       warn '选项无效，请输入 1–6、0 或域名。' 'Invalid option; enter 1–6, 0 or a domain.' >&2
+       continue
+      fi
+      selected=$choice;;
+  esac
+  printf '%s\n' "$selected"
+  return 0
+ done
 }
+reality_engine(){ python3 - "$@" <<'PY_REALITY'
+"""Read-only REALITY target diagnostics; standard library, no core required."""
+import argparse
+import ipaddress
+import json
+import os
+from pathlib import Path
+import queue
+import re
+import socket
+import ssl
+import sys
+import threading
+import time
+
+
+def hostname(value):
+    if not isinstance(value, str):
+        raise ValueError('Invalid hostname')
+    if '%' in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError('Invalid hostname')
+    value = value.strip().rstrip('.')
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        pass
+    value = value.encode('idna').decode('ascii').lower()
+    if len(value) > 253 or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', part)
+                                   for part in value.split('.')):
+        raise ValueError('Invalid hostname')
+    return value
+
+
+def target_parts(value, sni=''):
+    if not isinstance(value, str):
+        raise ValueError('Invalid target')
+    value = value.strip()
+    number = '443'
+    if value.startswith('['):
+        match = re.fullmatch(r'\[([^\]]+)\](?::([0-9]+))?', value)
+        if not match:
+            raise ValueError('Invalid target')
+        host, number = match[1], match[2] or '443'
+        if ipaddress.ip_address(host).version != 6:
+            raise ValueError('Invalid IPv6 target')
+    elif value.count(':') == 1:
+        host, number = value.rsplit(':', 1)
+    else:
+        host = value
+    host = hostname(host)
+    if not re.fullmatch(r'[0-9]{1,5}', number) or not 1 <= int(number) <= 65535:
+        raise ValueError('Invalid port')
+    return host, int(number), hostname(sni or host)
+
+
+def target_label(host, number):
+    return ('[' + host + ']' if ':' in host else host) + ':' + str(number)
+
+
+def resolve(host, number, timeout):
+    # A daemon resolver bounds DNS even if libc's resolver does not return.
+    results = queue.Queue()
+    def lookup():
+        try:
+            results.put(socket.getaddrinfo(host, number, type=socket.SOCK_STREAM))
+        except OSError as error:
+            results.put(error)
+    threading.Thread(target=lookup, daemon=True).start()
+    try:
+        value = results.get(timeout=timeout)
+    except queue.Empty:
+        raise TimeoutError('DNS deadline') from None
+    if isinstance(value, OSError):
+        raise value
+    return value
+
+
+def probe(target, sni='', ca_file=None, timeout=12):
+    host, number, sni = target_parts(target, sni)
+    checks = {key: {'status': 'skip', 'detail': 'not_checked'}
+              for key in ('dns', 'tcp', 'tls', 'certificate', 'h2')}
+    result = {'target': target_label(host, number), 'sni': sni, 'checks': checks, 'ok': False}
+    started = time.monotonic()
+    def remaining():
+        value = timeout - (time.monotonic() - started)
+        if value <= 0:
+            raise TimeoutError('Reality target deadline')
+        return value
+    stage = 'dns'
+    connection = None
+    try:
+        addresses = resolve(host, number, remaining())
+        if not addresses:
+            raise socket.gaierror()
+        resolved = list(dict.fromkeys(str(ipaddress.ip_address(item[4][0])) for item in addresses))
+        checks['dns'] = {'status': 'pass', 'detail': ', '.join(resolved[:4])}
+        stage = 'tcp'
+        last = None
+        for family, kind, protocol, _, endpoint in addresses:
+            wait = min(4, remaining())
+            connection = socket.socket(family, kind, protocol)
+            try:
+                connection.settimeout(wait)
+                connection.connect(endpoint)
+                break
+            except OSError as error:
+                last = error
+                connection.close()
+                connection = None
+        if connection is None:
+            raise last or OSError('No usable address')
+        peer = str(ipaddress.ip_address(connection.getpeername()[0]))
+        checks['tcp'] = {'status': 'pass', 'detail': target_label(peer, number)}
+        stage = 'tls'
+        context = ssl.create_default_context(cafile=ca_file)
+        context.minimum_version = ssl.TLSVersion.TLSv1_3
+        context.set_alpn_protocols(['h2'])
+        connection.settimeout(remaining())
+        with context.wrap_socket(connection, server_hostname=sni) as secure:
+            checks['tls'] = {'status': 'pass', 'detail': secure.version()}
+            # create_default_context verifies CA trust, validity and name.
+            checks['certificate'] = {'status': 'pass', 'detail': 'verified'}
+            stage = 'h2'
+            protocol = secure.selected_alpn_protocol()
+            checks['h2'] = {'status': 'pass' if protocol == 'h2' else 'fail',
+                            'detail': 'h2' if protocol == 'h2' else 'no_h2'}
+            result['ok'] = protocol == 'h2'
+    except ssl.SSLCertVerificationError as error:
+        reason = {9: 'not_yet_valid', 10: 'expired', 62: 'name_mismatch', 64: 'name_mismatch'}.get(
+            error.verify_code, 'untrusted')
+        checks['certificate'] = {'status': 'fail', 'detail': reason}
+    except socket.gaierror:
+        checks[stage] = {'status': 'fail', 'detail': 'dns_failed'}
+    except (TimeoutError, socket.timeout):
+        checks[stage] = {'status': 'fail', 'detail': 'timeout'}
+    except ssl.SSLError:
+        checks[stage] = {'status': 'fail', 'detail': 'tls_failed'}
+    except OSError:
+        checks[stage] = {'status': 'fail', 'detail': 'connect_failed' if stage == 'tcp' else 'system_failed'}
+    finally:
+        if connection is not None:
+            connection.close()
+    result['elapsed_ms'] = round((time.monotonic() - started) * 1000)
+    return result
+
+
+def configured_targets(path, project):
+    path = Path(path)
+    if not path.exists():
+        return []
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+        raise ValueError('Invalid configuration file')
+    config = json.loads(path.read_text())
+    targets = []
+    for node in config.get('inbounds', []):
+        if project == 'sing-box':
+            tls = node.get('tls', {})
+            reality = tls.get('reality', {})
+            if not tls.get('enabled') or not reality.get('enabled'):
+                continue
+            handshake = reality['handshake']
+            host = hostname(handshake['server'])
+            target = target_label(host, handshake.get('server_port', 443))
+            names = [tls['server_name']]
+        else:
+            stream = node.get('streamSettings', {})
+            if stream.get('security') != 'reality':
+                continue
+            reality = stream['realitySettings']
+            target = reality.get('target') or reality.get('dest')
+            names = reality['serverNames']
+        if not isinstance(names, list) or not names:
+            raise ValueError('Missing SNI')
+        for sni in names:
+            # No-SNI REALITY is not configured by either manager.
+            if not sni:
+                raise ValueError('Empty SNI cannot be checked by this diagnostic')
+            host, number, sni = target_parts(target, sni)
+            item = (target_label(host, number), sni)
+            if item not in targets:
+                targets.append(item)
+            if len(targets) > 64:
+                raise ValueError('Too many targets')
+    return targets
+
+
+def render(result, language):
+    english = language in ('en', 'en_US')
+    def text(zh, en):
+        return en if english else zh
+    labels = {'dns': ('DNS 解析', 'DNS resolution'), 'tcp': ('TCP 连接', 'TCP connection'),
+              'tls': ('TLS 1.3', 'TLS 1.3'), 'certificate': ('证书校验', 'Certificate'),
+              'h2': ('HTTP/2 (ALPN)', 'HTTP/2 (ALPN)')}
+    details = {
+        'not_checked': ('未完成检测', 'Not checked'),
+        'verified': ('信任链、有效期与握手域名匹配', 'Trusted chain, valid dates and matching SNI'),
+        'no_h2': ('未协商到 h2', 'h2 was not negotiated'),
+        'name_mismatch': ('证书与握手域名不匹配', 'Certificate does not match SNI'),
+        'expired': ('证书已过期，请同时检查系统时间', 'Certificate expired; also check the system clock'),
+        'not_yet_valid': ('证书尚未生效，请同时检查系统时间', 'Certificate not yet valid; also check the system clock'),
+        'untrusted': ('证书链不受信任或验证失败', 'Untrusted certificate chain or verification failed'),
+        'dns_failed': ('目标 DNS 解析失败', 'Target DNS lookup failed'),
+        'timeout': ('检测超时', 'Timed out'),
+        'tls_failed': ('TLS 握手失败，未完成 TLS 1.3 验证', 'TLS handshake failed; TLS 1.3 was not verified'),
+        'connect_failed': ('无法连接目标端口', 'Cannot connect to target port'),
+        'system_failed': ('本机网络或 CA 证书读取失败', 'Local network or CA store error'),
+    }
+    print('\n' + text('Reality 握手网站检测', 'Reality handshake target check'))
+    print(text('握手目标：', 'Target: ') + result['target'])
+    print(text('握手域名：', 'SNI: ') + result['sni'])
+    for key, item in result['checks'].items():
+        status = {'pass': text('通过', 'PASS'), 'fail': text('失败', 'FAIL'), 'skip': text('未检查', 'SKIP')}[item['status']]
+        detail = text(*details[item['detail']]) if item['detail'] in details else item['detail']
+        print('  [' + status + '] ' + text(*labels[key]) + ': ' + detail)
+    summary = (text('检测通过：TLS 1.3、HTTP/2 与证书正常', 'PASSED: TLS 1.3, HTTP/2 and certificate verified')
+               if result['ok'] else text('检测未通过：请根据上方原因检查目标', 'FAILED: inspect the reasons above'))
+    color = ('\033[1;32m' if result['ok'] else '\033[1;31m') if sys.stdout.isatty() and not os.environ.get('NO_COLOR') else ''
+    print(color + '===== ' + summary + ' =====' + ('\033[0m' if color else ''))
+    print(text('检测耗时：', 'Check duration: ') + str(result['elapsed_ms']) + ' ms')
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--target')
+    parser.add_argument('--sni', default='')
+    parser.add_argument('--config')
+    parser.add_argument('--list', action='store_true', help='List configured target/SNI pairs without probing')
+    parser.add_argument('--normalize', action='store_true', help='Print validated host, port and SNI without probing')
+    parser.add_argument('--project', choices=('sing-box', 'xray'), required=True)
+    parser.add_argument('--language', choices=('zh', 'en', 'zh_CN', 'en_US'), default='zh')
+    args = parser.parse_args(argv)
+    english = args.language in ('en', 'en_US')
+    try:
+        if args.target is not None:
+            host, number, sni = target_parts(args.target, args.sni)
+            targets = [(target_label(host, number), sni)]
+        elif args.config:
+            targets = configured_targets(args.config, args.project)
+        else:
+            raise ValueError('Target or configuration required')
+    except (ValueError, OSError, KeyError, TypeError, AttributeError, UnicodeError):
+        print('Invalid target/SNI or unreadable REALITY configuration; use a hostname or host:port.' if english else
+              '目标 / 握手域名无效，或无法读取 Reality 配置；请输入域名或 域名:端口。', file=sys.stderr)
+        return 2
+    if not targets:
+        if args.list:
+            return 0
+        print('No configured Reality targets; choose custom target check.' if english else
+              '未找到已配置的 Reality 握手目标，可选择“检测自定义网站”。')
+        return 0
+    if args.normalize:
+        if args.target is None:
+            return 2
+        print('\t'.join((host, str(number), sni)))
+        return 0
+    if args.list:
+        for target, sni in targets:
+            print(target + '\t' + sni)
+        return 0
+    failed = False
+    for target, sni in targets:
+        result = probe(target, sni)
+        render(result, args.language)
+        failed |= not result['ok']
+    print('\nOnly checks this VPS → target. It does not verify client → VPS or CDN connectivity.' if english else
+          '\n仅检测本 VPS → 握手目标，不代表客户端 → VPS 或 CDN 已连通。')
+    return int(failed)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+
+PY_REALITY
+}
+reality_replace(){
+ local current choice kind available=no item _old_target _old_sni sni target stage
+ current=$(helper reality-targets) || return 1
+ [[ -n $current ]] || { warn '未安装 Reality 节点，无需更换；可选择检测自定义网站。' 'No Reality node installed; use a custom target check instead.';return 0; }
+ say '当前节点 / 握手目标 / SNI：' 'Current node / target / SNI:'
+ printf '%s\n' "$current"
+ menu '选择要更换的节点\n1. Reality + Vision\n2. XHTTP + Reality\n0. 返回' 'Select the node to update\n1. Reality + Vision\n2. XHTTP + Reality\n0. Back'
+ choice=$(ask '> ' '> ') || return 0
+ case $choice in 1) kind=vision;;2) kind=xhttp-reality;;0) return 0;;*) return 1;;esac
+ while IFS=$'\t' read -r item _old_target _old_sni;do
+  [[ $item != "$kind" ]] || available=yes
+ done <<< "$current"
+ [[ $available == yes ]] || { error '所选 Reality 节点尚未安装，保留原配置。' 'Selected Reality node is not installed; configuration retained.';return 1; }
+ sni=$(choose_reality_sni) || return 0
+ [[ -n $sni ]] || return 0
+ target=$(ask "握手目标 [$sni:443]（0 返回）：" "Handshake target [$sni:443] (0 to return): ") || return 0
+ [[ $target != 0 ]] || return 0
+ target=${target:-$sni:443}
+ helper reality-edit --kind "$kind" --sni "$sni" --target "$target" --check-only || return 1
+ if ! report_output reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";then
+  error '新目标检测未通过，保留原配置。' 'New target failed checks; original configuration retained.';return 1
+ fi
+ warn '更换会短暂重启正在运行的服务；保留 UUID、密钥、端口及路径。所选节点的客户端需重新导入更新后的配置。' 'Running services will briefly restart; UUID, keys, port and path are retained. Re-import updated configuration on clients of this node.'
+ confirm '将所选节点的 Reality 握手网站更换为上述目标？' 'Apply this Reality handshake target to the selected node?' || return 0
+ stage=$(helper reality-edit --kind "$kind" --sni "$sni" --target "$target") || return 1
+ apply_stage "$stage" || return 1
+ say 'Reality 握手网站已更换；请重新导入节点或更新客户端 SNI。' 'Reality target updated; re-import the node or update client SNI.'
+}
+reality_menu(){
+ local choice target sni
+ if [[ $# == 0 || $1 == --menu ]]; then
+  menu 'Reality 握手网站检测\n1. 检测当前节点的握手网站\n2. 检测自定义网站\n3. 更换握手网站（先检测后应用）\n0. 返回' 'Reality handshake target checks\n1. Check configured Reality targets\n2. Check a custom target\n3. Change handshake target (check before applying)\n0. Back'
+  [[ ${1:-} != --menu ]] || return 0
+  choice=$(ask '> ' '> ') || return 0
+ else choice=$1; fi
+ case $choice in
+  1) report_output reality_engine --project xray --language "$LANGUAGE" --config "$SKYBYTE_XRAY_DIR/config.json";;
+  2) target=$(ask '握手目标（域名或 域名:端口，0 返回）：' 'Target (hostname or host:port, 0 to return): ') || return 0
+     [[ $target != 0 ]] || return 0
+     [[ -n $target ]] || { error '请填写握手目标。' 'Enter a target.';return 1; }
+     sni=$(ask '握手域名 / SNI（回车使用目标域名）：' 'Handshake SNI (Enter uses target hostname): ') || return 0
+     report_output reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";;
+  3) reality_replace;;
+  0) return 0;; *) return 1;;
+ esac
+}
+# modules/install.sh — build-time module; assembled by scripts/build.py.
+install_node(){
+ local choice kind node_name node_port host sni target listen path='' mode=auto cert='' private_key='' stage
+ local ipv6_install=${1:-} ipv6_status ipv6_ufw_status
+ local flags=() apply_options=()
+ if [[ $ipv6_install == ipv6 ]];then
+  choice=${2:-0}
+  case $choice in 1|2|3);;0)return 0;;*)return 1;;esac
+ else
+  menu '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. 节点安装前检测（不安装）\n5. 搭建 IPv6 节点\n0. 返回' '1. VLESS + Reality + Vision\n2. VLESS + XHTTP + Reality\n3. VLESS + XHTTP + TLS / CDN\n4. Node installation checks (no installation)\n5. Install IPv6 nodes\n0. Back'
+  choice=$(ask '> ' '> ') || return 1
+ fi
+ case $choice in 1) kind=vision; node_port=443;; 2) kind=xhttp-reality; node_port=443;; 3) kind=xhttp-tls; node_port=2053;; 4) run_submenu installation_check_menu;return;; 5) run_submenu ipv6_install_menu;return;; 0) return 0;; *) return 1;; esac
+ if [[ $ipv6_install == ipv6 ]];then
+  if ! command -v ip >/dev/null;then install_environment_check "$kind" || return 1;fi
+  host=$(ipv6_install_address) || { ipv6_status=$?;[[ $ipv6_status == 2 ]] && return 0;return 1; }
+  listen=::
+  warn '使用所选 IPv6 作为节点连接地址，监听支持双栈。客户端网络必须支持 IPv6，云安全组和系统防火墙需放行 IPv6 TCP 端口。纯 IPv6 VPS 访问 IPv4 网站需要另行配置可用出站。已有同协议节点请用 l → 9 增加 IPv6 备用入口。' 'The selected IPv6 is the client address with a dual-stack listener. Client IPv6 and provider/host IPv6 TCP rules are required. IPv6-only VPSs need a separate working egress for IPv4-only sites. Use l → 9 for IPv6 backups on an existing protocol.'
+ fi
+ node_name=$(ask '节点名称 [SKYBYTE]：' 'Node name [SKYBYTE]: ') || return 1; node_name=${node_name:-SKYBYTE}-$kind
+ [[ $ipv6_install != ipv6 ]] || node_name+=-IPv6
+ node_port=$(ask "监听 TCP 端口 [$node_port]：" "TCP listen port [$node_port]: ") || return 1
+ case $kind in vision|xhttp-reality) node_port=${node_port:-443};; *) node_port=${node_port:-2053};; esac
+ if [[ $ipv6_install != ipv6 ]];then
+  listen=$(ask '监听：1 IPv4  2 双栈 IPv4+IPv6 [1]：' 'Listen: 1 IPv4  2 Dual-stack IPv4+IPv6 [1]: ') || return 1
+  case ${listen:-1} in 1) listen=0.0.0.0;; 2) listen=::;; *) return 1;; esac
+  while :; do
+   host=$(ask '客户端连接地址（必填：本 VPS 的公网 IP 或域名）：' 'Client connection address (required: this VPS public IP/domain): ') || return 1
+   [[ $host =~ [^[:space:]] ]] && break
+   warn '此项没有默认值，请填写本 VPS 的公网 IP 或域名。' 'There is no default; enter this VPS public IP or domain.'
+  done
+ fi
+ helper preflight --port "$node_port" --listen "$listen" --address "$host" --name "$node_name" --kind "$kind" || return 1
+ install_environment_check "$kind" && install_port_check "$node_port" "$listen" || return 1
+ if [[ $kind == xhttp-tls ]]; then
+  sni=$(ask '证书域名 / TLS SNI：' 'Certificate domain / TLS SNI: ') || return 1
+  cert=$(ask '已有可信 fullchain 证书文件绝对路径：' 'Absolute path to trusted fullchain certificate: ') || return 1
+  private_key=$(ask '私钥文件绝对路径（不修改源文件）：' 'Absolute private-key path (source is preserved): ') || return 1
+  helper tls-input --sni "$sni" --cert "$cert" --key "$private_key" || return 1
+  local cdn
+  if [[ $ipv6_install != ipv6 ]];then
+   cdn=$(ask '通过 CDN 连接？[y/N]：' 'Use a CDN? [y/N]: ') || return 1
+   if confirmed "$cdn"; then flags+=(--cdn); mode=packet-up; fi
+   warn 'CDN 的 DNS、HTTPS 端口及回源 TLS 验证须在提供商后台配置。' 'Configure CDN DNS, supported HTTPS port and verified origin TLS at your provider.'
+  fi
+ else
+  sni=$(choose_reality_sni) || return 1
+  [[ -n $sni ]] || return 0
+  target=$(ask "握手目标 [$sni:443]：" "Handshake target [$sni:443]: ") || return 1; target=${target:-$sni:443}
+  install_reality_target "$sni" "$target" || return 1
+ fi
+ if [[ $kind == xhttp-* ]]; then
+  path=$(ask 'XHTTP 路径（回车自动生成）：' 'XHTTP path (Enter to generate): ') || return 1
+  local selected
+  selected=$(ask "模式 [$mode]（auto / packet-up / stream-up / stream-one）：" "Mode [$mode] (auto / packet-up / stream-up / stream-one): ") || return 1
+  mode=${selected:-$mode}
+ fi
+ warn '请放行实际 TCP 端口，可用菜单 l 管理系统防火墙；配置检查不等于公网或 CDN 已连通。' 'Allow the actual TCP port using menu l for the host firewall; validation does not prove public/CDN connectivity.'
+ if ! confirm '安装并启动所选节点？' 'Install and start the selected node?'; then
+  say '已取消节点安装，未下载核心或更改节点配置。' 'Node installation cancelled; no core download or node configuration changes.'
+  return 0
+ fi
+ install_download_check || return 1
+ ensure_binary || { error '核心准备失败，具体原因见上方提示。' 'Core preparation failed; see the reason above.'; return 1; }
+ flags+=(--kind "$kind" --port "$node_port" --listen "$listen" --address "$host" --sni "$sni" --name "$node_name")
+ if [[ $kind == xhttp-tls ]]; then flags+=(--cert "$cert" --key "$private_key")
+ else flags+=(--target "$target"); fi
+ [[ $kind != xhttp-* ]] || flags+=(--path "$path" --mode "$mode")
+ stage=$(helper prepare "${flags[@]}") || { error '节点配置准备失败，具体原因见上方提示。' 'Node configuration preparation failed; see the reason above.'; return 1; }
+ apply_options=("$stage" yes)
+ if [[ $ipv6_install == ipv6 ]];then
+  if ! ipv6_engine check-install "$host";then helper finalize --stage "$stage";return 1;fi
+  if ! ipv6_ufw_status=$(helper ufw-state);then helper finalize --stage "$stage";return 1;fi
+  if [[ $ipv6_ufw_status == active ]];then
+   warn '先放行新端口；后续安装失败时，新增放行规则会保留，请自行核对。' 'Allowing the new port first; added rules remain if installation later fails. Review them if needed.'
+   if ! helper firewall-allow --ports "$node_port";then helper finalize --stage "$stage";return 1;fi
+  fi
+  apply_options+=("ipv6-install:$node_port")
+ fi
+ apply_stage "${apply_options[@]}" || { error '安装失败，原配置已保留或回退。' 'Install failed; previous configuration retained or restored.'; return 1; }
+ show_nodes
+}
+# modules/warp.sh — build-time module; assembled by scripts/build.py.
 warp_choose_profile(){
  local selection profile domains
  menu '分流平台\n1 Netflix + Disney+ + ChatGPT + Gemini（默认）\n2 仅 Netflix\n3 仅 Disney+\n4 仅 ChatGPT\n5 仅 Gemini\n6 自定义域名后缀\n0 返回' 'Routing profile\n1 Netflix + Disney+ + ChatGPT + Gemini (default)\n2 Netflix only\n3 Disney+ only\n4 ChatGPT only\n5 Gemini only\n6 Custom domain suffixes\n0 Back' >&2
@@ -3232,6 +3566,60 @@ PY_WARP_PORT
  ((ready)) || { error 'WARP 尚未就绪，节点分流未改变。可稍后选择选项 2 重试。' 'WARP is not ready; node routing is unchanged. Retry with option 2 later.'; return 1; }
  warp_apply "$proxy_port"
 }
+warp_menu(){
+ local choice proxy_port stage
+ # --menu renders only; a numeric argument executes one selected operation.
+ if [[ $# == 0 || $1 == --menu ]]; then
+ printf '\n%s%s%s\n' "$CYAN" "$(if [[ $LANGUAGE == en ]]; then printf '========== WARP Manager =========='; else printf '========== WARP 管理 =========='; fi)" "$RESET"
+ report_output helper warp-status --language "$LANGUAGE" || return 1
+ menu '
+【代理设置】
+1. 安装官方 WARP 本机代理
+
+【分流设置】
+2. 使用已有代理 / 选择分流平台
+3. 关闭 WARP 分流，恢复直连
+
+【连接检测】
+4. 验证 WARP 出口
+5. 对比直连 / WARP 平台响应
+6. 专业流媒体 / 回程 / 测速
+
+0. 返回
+--------------------------------------' '
+[Proxy setup]
+1. Install official WARP local proxy
+
+[Routing]
+2. Existing proxy / choose platforms
+3. Disable WARP routing, restore direct
+
+[Connection tests]
+4. Verify WARP egress
+5. Compare direct / WARP platform responses
+6. Professional media / routes / speed tests
+
+0. Back
+--------------------------------------'
+ [[ ${1:-} != --menu ]] || return 0
+ choice=$(ask '> ' '> ') || return 0
+ else
+  choice=$1
+ fi
+ case $choice in
+  1) warp_install_client;;
+  6) media_check --interactive;;
+  2|4|5)
+   proxy_port=$(ask '本机 SOCKS5 端口 [40000]：' 'Local SOCKS5 port [40000]: ') || return 0
+   proxy_port=${proxy_port:-40000}
+   case $choice in 2) warp_apply "$proxy_port";; 4) helper warp-check --proxy-port "$proxy_port";; 5) warp_platform_test "$proxy_port";; esac;;
+  3) confirm '关闭本项目 WARP 分流？WARP 软件和其他项目保持原样。' 'Disable WARP routing for this project? WARP and other projects are retained.' || return 0
+     stage=$(helper warp-prepare --disable) || return 1
+     apply_stage "$stage";;
+  0) return 0;; *) return 1;;
+ esac
+}
+# lib/media.sh — build-time module; assembled by scripts/build.py.
 media_engine(){
  python3 - "$@" <<'PY_DIAGNOSTICS'
 """Verified, on-demand upstream diagnostics. No node configuration is read."""
@@ -3587,379 +3975,7 @@ media_check(){
  report_output media_engine "$action" "$SKYBYTE_XRAY_DIR/reports" "$LANGUAGE" "$port"
 }
 
-warp_menu(){
- local choice proxy_port stage
- # --menu renders only; a numeric argument executes one selected operation.
- if [[ $# == 0 || $1 == --menu ]]; then
- printf '\n%s%s%s\n' "$CYAN" "$(if [[ $LANGUAGE == en ]]; then printf '========== WARP Manager =========='; else printf '========== WARP 管理 =========='; fi)" "$RESET"
- report_output helper warp-status --language "$LANGUAGE" || return 1
- menu '
-【代理设置】
-1. 安装官方 WARP 本机代理
-
-【分流设置】
-2. 使用已有代理 / 选择分流平台
-3. 关闭 WARP 分流，恢复直连
-
-【连接检测】
-4. 验证 WARP 出口
-5. 对比直连 / WARP 平台响应
-6. 专业流媒体 / 回程 / 测速
-
-0. 返回
---------------------------------------' '
-[Proxy setup]
-1. Install official WARP local proxy
-
-[Routing]
-2. Existing proxy / choose platforms
-3. Disable WARP routing, restore direct
-
-[Connection tests]
-4. Verify WARP egress
-5. Compare direct / WARP platform responses
-6. Professional media / routes / speed tests
-
-0. Back
---------------------------------------'
- [[ ${1:-} != --menu ]] || return 0
- choice=$(ask '> ' '> ') || return 0
- else
-  choice=$1
- fi
- case $choice in
-  1) warp_install_client;;
-  6) media_check --interactive;;
-  2|4|5)
-   proxy_port=$(ask '本机 SOCKS5 端口 [40000]：' 'Local SOCKS5 port [40000]: ') || return 0
-   proxy_port=${proxy_port:-40000}
-   case $choice in 2) warp_apply "$proxy_port";; 4) helper warp-check --proxy-port "$proxy_port";; 5) warp_platform_test "$proxy_port";; esac;;
-  3) confirm '关闭本项目 WARP 分流？WARP 软件和其他项目保持原样。' 'Disable WARP routing for this project? WARP and other projects are retained.' || return 0
-     stage=$(helper warp-prepare --disable) || return 1
-     apply_stage "$stage";;
-  0) return 0;; *) return 1;;
- esac
-}
-reality_engine(){ python3 - "$@" <<'PY_REALITY'
-"""Read-only REALITY target diagnostics; standard library, no core required."""
-import argparse
-import ipaddress
-import json
-import os
-from pathlib import Path
-import queue
-import re
-import socket
-import ssl
-import sys
-import threading
-import time
-
-
-def hostname(value):
-    if not isinstance(value, str):
-        raise ValueError('Invalid hostname')
-    if '%' in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
-        raise ValueError('Invalid hostname')
-    value = value.strip().rstrip('.')
-    try:
-        return str(ipaddress.ip_address(value))
-    except ValueError:
-        pass
-    value = value.encode('idna').decode('ascii').lower()
-    if len(value) > 253 or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', part)
-                                   for part in value.split('.')):
-        raise ValueError('Invalid hostname')
-    return value
-
-
-def target_parts(value, sni=''):
-    if not isinstance(value, str):
-        raise ValueError('Invalid target')
-    value = value.strip()
-    number = '443'
-    if value.startswith('['):
-        match = re.fullmatch(r'\[([^\]]+)\](?::([0-9]+))?', value)
-        if not match:
-            raise ValueError('Invalid target')
-        host, number = match[1], match[2] or '443'
-        if ipaddress.ip_address(host).version != 6:
-            raise ValueError('Invalid IPv6 target')
-    elif value.count(':') == 1:
-        host, number = value.rsplit(':', 1)
-    else:
-        host = value
-    host = hostname(host)
-    if not re.fullmatch(r'[0-9]{1,5}', number) or not 1 <= int(number) <= 65535:
-        raise ValueError('Invalid port')
-    return host, int(number), hostname(sni or host)
-
-
-def target_label(host, number):
-    return ('[' + host + ']' if ':' in host else host) + ':' + str(number)
-
-
-def resolve(host, number, timeout):
-    # A daemon resolver bounds DNS even if libc's resolver does not return.
-    results = queue.Queue()
-    def lookup():
-        try:
-            results.put(socket.getaddrinfo(host, number, type=socket.SOCK_STREAM))
-        except OSError as error:
-            results.put(error)
-    threading.Thread(target=lookup, daemon=True).start()
-    try:
-        value = results.get(timeout=timeout)
-    except queue.Empty:
-        raise TimeoutError('DNS deadline') from None
-    if isinstance(value, OSError):
-        raise value
-    return value
-
-
-def probe(target, sni='', ca_file=None, timeout=12):
-    host, number, sni = target_parts(target, sni)
-    checks = {key: {'status': 'skip', 'detail': 'not_checked'}
-              for key in ('dns', 'tcp', 'tls', 'certificate', 'h2')}
-    result = {'target': target_label(host, number), 'sni': sni, 'checks': checks, 'ok': False}
-    started = time.monotonic()
-    def remaining():
-        value = timeout - (time.monotonic() - started)
-        if value <= 0:
-            raise TimeoutError('Reality target deadline')
-        return value
-    stage = 'dns'
-    connection = None
-    try:
-        addresses = resolve(host, number, remaining())
-        if not addresses:
-            raise socket.gaierror()
-        resolved = list(dict.fromkeys(str(ipaddress.ip_address(item[4][0])) for item in addresses))
-        checks['dns'] = {'status': 'pass', 'detail': ', '.join(resolved[:4])}
-        stage = 'tcp'
-        last = None
-        for family, kind, protocol, _, endpoint in addresses:
-            wait = min(4, remaining())
-            connection = socket.socket(family, kind, protocol)
-            try:
-                connection.settimeout(wait)
-                connection.connect(endpoint)
-                break
-            except OSError as error:
-                last = error
-                connection.close()
-                connection = None
-        if connection is None:
-            raise last or OSError('No usable address')
-        peer = str(ipaddress.ip_address(connection.getpeername()[0]))
-        checks['tcp'] = {'status': 'pass', 'detail': target_label(peer, number)}
-        stage = 'tls'
-        context = ssl.create_default_context(cafile=ca_file)
-        context.minimum_version = ssl.TLSVersion.TLSv1_3
-        context.set_alpn_protocols(['h2'])
-        connection.settimeout(remaining())
-        with context.wrap_socket(connection, server_hostname=sni) as secure:
-            checks['tls'] = {'status': 'pass', 'detail': secure.version()}
-            # create_default_context verifies CA trust, validity and name.
-            checks['certificate'] = {'status': 'pass', 'detail': 'verified'}
-            stage = 'h2'
-            protocol = secure.selected_alpn_protocol()
-            checks['h2'] = {'status': 'pass' if protocol == 'h2' else 'fail',
-                            'detail': 'h2' if protocol == 'h2' else 'no_h2'}
-            result['ok'] = protocol == 'h2'
-    except ssl.SSLCertVerificationError as error:
-        reason = {9: 'not_yet_valid', 10: 'expired', 62: 'name_mismatch', 64: 'name_mismatch'}.get(
-            error.verify_code, 'untrusted')
-        checks['certificate'] = {'status': 'fail', 'detail': reason}
-    except socket.gaierror:
-        checks[stage] = {'status': 'fail', 'detail': 'dns_failed'}
-    except (TimeoutError, socket.timeout):
-        checks[stage] = {'status': 'fail', 'detail': 'timeout'}
-    except ssl.SSLError:
-        checks[stage] = {'status': 'fail', 'detail': 'tls_failed'}
-    except OSError:
-        checks[stage] = {'status': 'fail', 'detail': 'connect_failed' if stage == 'tcp' else 'system_failed'}
-    finally:
-        if connection is not None:
-            connection.close()
-    result['elapsed_ms'] = round((time.monotonic() - started) * 1000)
-    return result
-
-
-def configured_targets(path, project):
-    path = Path(path)
-    if not path.exists():
-        return []
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
-        raise ValueError('Invalid configuration file')
-    config = json.loads(path.read_text())
-    targets = []
-    for node in config.get('inbounds', []):
-        if project == 'sing-box':
-            tls = node.get('tls', {})
-            reality = tls.get('reality', {})
-            if not tls.get('enabled') or not reality.get('enabled'):
-                continue
-            handshake = reality['handshake']
-            host = hostname(handshake['server'])
-            target = target_label(host, handshake.get('server_port', 443))
-            names = [tls['server_name']]
-        else:
-            stream = node.get('streamSettings', {})
-            if stream.get('security') != 'reality':
-                continue
-            reality = stream['realitySettings']
-            target = reality.get('target') or reality.get('dest')
-            names = reality['serverNames']
-        if not isinstance(names, list) or not names:
-            raise ValueError('Missing SNI')
-        for sni in names:
-            # No-SNI REALITY is not configured by either manager.
-            if not sni:
-                raise ValueError('Empty SNI cannot be checked by this diagnostic')
-            host, number, sni = target_parts(target, sni)
-            item = (target_label(host, number), sni)
-            if item not in targets:
-                targets.append(item)
-            if len(targets) > 64:
-                raise ValueError('Too many targets')
-    return targets
-
-
-def render(result, language):
-    english = language in ('en', 'en_US')
-    def text(zh, en):
-        return en if english else zh
-    labels = {'dns': ('DNS 解析', 'DNS resolution'), 'tcp': ('TCP 连接', 'TCP connection'),
-              'tls': ('TLS 1.3', 'TLS 1.3'), 'certificate': ('证书校验', 'Certificate'),
-              'h2': ('HTTP/2 (ALPN)', 'HTTP/2 (ALPN)')}
-    details = {
-        'not_checked': ('未完成检测', 'Not checked'),
-        'verified': ('信任链、有效期与握手域名匹配', 'Trusted chain, valid dates and matching SNI'),
-        'no_h2': ('未协商到 h2', 'h2 was not negotiated'),
-        'name_mismatch': ('证书与握手域名不匹配', 'Certificate does not match SNI'),
-        'expired': ('证书已过期，请同时检查系统时间', 'Certificate expired; also check the system clock'),
-        'not_yet_valid': ('证书尚未生效，请同时检查系统时间', 'Certificate not yet valid; also check the system clock'),
-        'untrusted': ('证书链不受信任或验证失败', 'Untrusted certificate chain or verification failed'),
-        'dns_failed': ('目标 DNS 解析失败', 'Target DNS lookup failed'),
-        'timeout': ('检测超时', 'Timed out'),
-        'tls_failed': ('TLS 握手失败，未完成 TLS 1.3 验证', 'TLS handshake failed; TLS 1.3 was not verified'),
-        'connect_failed': ('无法连接目标端口', 'Cannot connect to target port'),
-        'system_failed': ('本机网络或 CA 证书读取失败', 'Local network or CA store error'),
-    }
-    print('\n' + text('Reality 握手网站检测', 'Reality handshake target check'))
-    print(text('握手目标：', 'Target: ') + result['target'])
-    print(text('握手域名：', 'SNI: ') + result['sni'])
-    for key, item in result['checks'].items():
-        status = {'pass': text('通过', 'PASS'), 'fail': text('失败', 'FAIL'), 'skip': text('未检查', 'SKIP')}[item['status']]
-        detail = text(*details[item['detail']]) if item['detail'] in details else item['detail']
-        print('  [' + status + '] ' + text(*labels[key]) + ': ' + detail)
-    summary = (text('检测通过：TLS 1.3、HTTP/2 与证书正常', 'PASSED: TLS 1.3, HTTP/2 and certificate verified')
-               if result['ok'] else text('检测未通过：请根据上方原因检查目标', 'FAILED: inspect the reasons above'))
-    color = ('\033[1;32m' if result['ok'] else '\033[1;31m') if sys.stdout.isatty() and not os.environ.get('NO_COLOR') else ''
-    print(color + '===== ' + summary + ' =====' + ('\033[0m' if color else ''))
-    print(text('检测耗时：', 'Check duration: ') + str(result['elapsed_ms']) + ' ms')
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--target')
-    parser.add_argument('--sni', default='')
-    parser.add_argument('--config')
-    parser.add_argument('--list', action='store_true', help='List configured target/SNI pairs without probing')
-    parser.add_argument('--normalize', action='store_true', help='Print validated host, port and SNI without probing')
-    parser.add_argument('--project', choices=('sing-box', 'xray'), required=True)
-    parser.add_argument('--language', choices=('zh', 'en', 'zh_CN', 'en_US'), default='zh')
-    args = parser.parse_args(argv)
-    english = args.language in ('en', 'en_US')
-    try:
-        if args.target is not None:
-            host, number, sni = target_parts(args.target, args.sni)
-            targets = [(target_label(host, number), sni)]
-        elif args.config:
-            targets = configured_targets(args.config, args.project)
-        else:
-            raise ValueError('Target or configuration required')
-    except (ValueError, OSError, KeyError, TypeError, AttributeError, UnicodeError):
-        print('Invalid target/SNI or unreadable REALITY configuration; use a hostname or host:port.' if english else
-              '目标 / 握手域名无效，或无法读取 Reality 配置；请输入域名或 域名:端口。', file=sys.stderr)
-        return 2
-    if not targets:
-        if args.list:
-            return 0
-        print('No configured Reality targets; choose custom target check.' if english else
-              '未找到已配置的 Reality 握手目标，可选择“检测自定义网站”。')
-        return 0
-    if args.normalize:
-        if args.target is None:
-            return 2
-        print('\t'.join((host, str(number), sni)))
-        return 0
-    if args.list:
-        for target, sni in targets:
-            print(target + '\t' + sni)
-        return 0
-    failed = False
-    for target, sni in targets:
-        result = probe(target, sni)
-        render(result, args.language)
-        failed |= not result['ok']
-    print('\nOnly checks this VPS → target. It does not verify client → VPS or CDN connectivity.' if english else
-          '\n仅检测本 VPS → 握手目标，不代表客户端 → VPS 或 CDN 已连通。')
-    return int(failed)
-
-
-if __name__ == '__main__':
-    sys.exit(main())
-
-PY_REALITY
-}
-reality_replace(){
- local current choice kind available=no item _old_target _old_sni sni target stage
- current=$(helper reality-targets) || return 1
- [[ -n $current ]] || { warn '未安装 Reality 节点，无需更换；可选择检测自定义网站。' 'No Reality node installed; use a custom target check instead.';return 0; }
- say '当前节点 / 握手目标 / SNI：' 'Current node / target / SNI:'
- printf '%s\n' "$current"
- menu '选择要更换的节点\n1. Reality + Vision\n2. XHTTP + Reality\n0. 返回' 'Select the node to update\n1. Reality + Vision\n2. XHTTP + Reality\n0. Back'
- choice=$(ask '> ' '> ') || return 0
- case $choice in 1) kind=vision;;2) kind=xhttp-reality;;0) return 0;;*) return 1;;esac
- while IFS=$'\t' read -r item _old_target _old_sni;do
-  [[ $item != "$kind" ]] || available=yes
- done <<< "$current"
- [[ $available == yes ]] || { error '所选 Reality 节点尚未安装，保留原配置。' 'Selected Reality node is not installed; configuration retained.';return 1; }
- sni=$(choose_reality_sni) || return 0
- [[ -n $sni ]] || return 0
- target=$(ask "握手目标 [$sni:443]（0 返回）：" "Handshake target [$sni:443] (0 to return): ") || return 0
- [[ $target != 0 ]] || return 0
- target=${target:-$sni:443}
- helper reality-edit --kind "$kind" --sni "$sni" --target "$target" --check-only || return 1
- if ! report_output reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";then
-  error '新目标检测未通过，保留原配置。' 'New target failed checks; original configuration retained.';return 1
- fi
- warn '更换会短暂重启正在运行的服务；保留 UUID、密钥、端口及路径。所选节点的客户端需重新导入更新后的配置。' 'Running services will briefly restart; UUID, keys, port and path are retained. Re-import updated configuration on clients of this node.'
- confirm '将所选节点的 Reality 握手网站更换为上述目标？' 'Apply this Reality handshake target to the selected node?' || return 0
- stage=$(helper reality-edit --kind "$kind" --sni "$sni" --target "$target") || return 1
- apply_stage "$stage" || return 1
- say 'Reality 握手网站已更换；请重新导入节点或更新客户端 SNI。' 'Reality target updated; re-import the node or update client SNI.'
-}
-reality_menu(){
- local choice target sni
- if [[ $# == 0 || $1 == --menu ]]; then
-  menu 'Reality 握手网站检测\n1. 检测当前节点的握手网站\n2. 检测自定义网站\n3. 更换握手网站（先检测后应用）\n0. 返回' 'Reality handshake target checks\n1. Check configured Reality targets\n2. Check a custom target\n3. Change handshake target (check before applying)\n0. Back'
-  [[ ${1:-} != --menu ]] || return 0
-  choice=$(ask '> ' '> ') || return 0
- else choice=$1; fi
- case $choice in
-  1) report_output reality_engine --project xray --language "$LANGUAGE" --config "$SKYBYTE_XRAY_DIR/config.json";;
-  2) target=$(ask '握手目标（域名或 域名:端口，0 返回）：' 'Target (hostname or host:port, 0 to return): ') || return 0
-     [[ $target != 0 ]] || return 0
-     [[ -n $target ]] || { error '请填写握手目标。' 'Enter a target.';return 1; }
-     sni=$(ask '握手域名 / SNI（回车使用目标域名）：' 'Handshake SNI (Enter uses target hostname): ') || return 0
-     report_output reality_engine --project xray --language "$LANGUAGE" --target "$target" --sni "$sni";;
-  3) reality_replace;;
-  0) return 0;; *) return 1;;
- esac
-}
+# lib/menu.sh — build-time module; assembled by scripts/build.py.
 run_submenu(){
  local handler=$1 choice
  while :; do
