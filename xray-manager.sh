@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 set -Eeuo pipefail
 umask 077
-VERSION=0.1.33
+VERSION=0.1.34
 CORE_VERSION=v26.10.31
 SKYBYTE_XRAY_DIR=${SKYBYTE_XRAY_DIR:-/etc/skybyte-xray}
 SKYBYTE_XRAY_LIB=${SKYBYTE_XRAY_LIB:-/usr/local/lib/skybyte-xray}
@@ -55,7 +55,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.33"
+VERSION = "0.1.34"
 CORE_VERSION = "v26.10.31"
 OWNER = "SKYBYTE-XRAY/1\n"
 UNIT_MARK = "# SKYBYTE Xray Manager unit v1\n"
@@ -2626,6 +2626,25 @@ PY
  helper finalize --stage "$stage" || return 1
  accepted=1
 )
+configuration_check(){
+ if [[ ! -f $SKYBYTE_XRAY_DIR/config.json ]];then
+  error '[未检查] 未发现节点配置，请先安装节点。' '[Not checked] No node configuration found; install a node first.'
+  return 1
+ fi
+ if [[ ! -x $SKYBYTE_XRAY_BINARY ]];then
+  error '[未检查] Xray 核心不存在或不可执行。' '[Not checked] Xray binary is missing or not executable.'
+  return 1
+ fi
+ say '===== Xray 配置检查 =====' '===== Xray configuration check ====='
+ say "配置文件：$SKYBYTE_XRAY_DIR/config.json" "Configuration file: $SKYBYTE_XRAY_DIR/config.json"
+ if "$SKYBYTE_XRAY_BINARY" run -test -config "$SKYBYTE_XRAY_DIR/config.json";then
+  say '[通过] 配置检查通过' '[PASS] Configuration check passed'
+  say '检查范围：配置有效性，不代表服务已运行或公网已连通。' 'Scope: configuration validity; service status and public connectivity are not tested.'
+ else
+  error '[失败] 配置检查未通过，请查看上方核心报错。' '[FAIL] Configuration check failed; see the core error above.'
+  return 1
+ fi
+}
 service_menu(){
  helper guard || return 1
  # --menu renders only; a numeric argument executes one selected operation.
@@ -2652,7 +2671,7 @@ service_menu(){
  case $choice in
   1) report_output systemctl status skybyte-xray.service --no-pager || true;;
   2) systemctl start skybyte-xray.service;; 3) systemctl stop skybyte-xray.service;; 4) systemctl restart skybyte-xray.service;;
-  5) "$SKYBYTE_XRAY_BINARY" run -test -config "$SKYBYTE_XRAY_DIR/config.json";;
+  5) report_output configuration_check;;
   6) report_output journalctl -u skybyte-xray.service -n 60 --no-pager;; 0) return 0;; *) return 1;;
  esac
 }
