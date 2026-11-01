@@ -14,11 +14,12 @@ files=['bootstrap.sh','install.sh','xray-manager.sh','README.md','README_EN.md',
        'tests/test_ipv6_install.py','tests/test_port_editor.py','tests/test_ipv6_native.py','tests/test_ipv6_backup.py','tests/test_media_diagnostics.py','tests/test_bootstrap.py','tests/test_updater.py','tests/test_network.py','tests/test_fail2ban.py','tests/test_manager.py','tests/test_services.py','tests/test_installer.py','tests/test_overview.py','tests/test_warp.py','tests/test_navigation.py','tests/test_reality.py','tests/test_parameters.py','tests/test_preflight.py','tests/test_install_checks.py','.github/workflows/test.yml']
 files += ['docs/AUDIT-2026-11-01.md', 'docs/MODULES.md', 'tests/test_build.py', 'tests/test_ports.sh', 'tests/test_reinstall.sh', 'tests/test_uninstall.sh']
 files += sorted(str(p.relative_to(root)) for directory in ('lib', 'modules') for p in (root/directory).glob('*.sh'))
+files += sorted(str(p.relative_to(root)) for p in (root/'src').glob('core_*.py'))
 folder=root/'dist';folder.mkdir(exist_ok=True)
-output=folder/'SKYBYTE-Xray-Manager-v0.1.32.tar.gz'
+output=folder/'SKYBYTE-Xray-Manager-v0.1.33.tar.gz'
 with tarfile.open(output,'w:gz') as archive:
     for relative in files:
-        archive.add(root/relative,arcname='skybyte-xray-manager-v0.1.32/'+relative,recursive=False)
+        archive.add(root/relative,arcname='skybyte-xray-manager-v0.1.33/'+relative,recursive=False)
 for name in ['bootstrap.sh','install.sh','xray-manager.sh']:
     (folder/name).write_bytes((root/name).read_bytes())
     (folder/name).chmod(0o755)

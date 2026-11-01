@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 import tarfile
+import tempfile
+from pathlib import Path
 from test_manager import TemporaryFixture, PROJECT
 
 
@@ -47,7 +49,7 @@ import os,shutil,sys
 from pathlib import Path
 args=sys.argv[1:]
 url=next(x for x in args if x.startswith('https://'))
-prefix='https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.32/'
+prefix='https://github.com/skylink9119/skybyte-xray-manager/releases/download/v0.1.33/'
 if not url.startswith(prefix): sys.exit(23)
 asset=url[len(prefix):]
 if asset not in ['SHA256SUMS','xray-manager.sh']: sys.exit(23)
@@ -95,7 +97,7 @@ shutil.copyfile(source,args[args.index('-o')+1])
         self.assertEqual(result.returncode,0,result.stderr)
         result=subprocess.run([str(self.shortcut),'--version'],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(result.stdout.strip(),'SKYBYTE Xray Manager 0.1.32')
+        self.assertEqual(result.stdout.strip(),'SKYBYTE Xray Manager 0.1.33')
         self.assertEqual(self.lib.stat().st_mode & 0o777,0o700)
         self.assertEqual((self.lib/'manager.sh').stat().st_mode & 0o777,0o700)
         self.assertEqual((self.lib/'.owner').stat().st_mode & 0o777,0o600)
@@ -111,7 +113,7 @@ shutil.copyfile(source,args[args.index('-o')+1])
     def test_reinstall_refuses_downgrade_before_replacing_files(self):
         self.assertEqual(self.install().returncode, 0)
         target = self.lib/'manager.sh'
-        newer = target.read_bytes().replace(b'\nVERSION=0.1.32\n', b'\nVERSION=0.99.0\n', 1)
+        newer = target.read_bytes().replace(b'\nVERSION=0.1.33\n', b'\nVERSION=0.99.0\n', 1)
         target.write_bytes(newer)
         shortcut = self.shortcut.read_bytes()
         result = self.install()
@@ -123,7 +125,7 @@ shutil.copyfile(source,args[args.index('-o')+1])
     def test_unknown_installed_version_is_not_overwritten(self):
         self.assertEqual(self.install().returncode, 0)
         target = self.lib/'manager.sh'
-        unknown = target.read_bytes().replace(b'\nVERSION=0.1.32\n', b'\nVERSION=development\n', 1)
+        unknown = target.read_bytes().replace(b'\nVERSION=0.1.33\n', b'\nVERSION=development\n', 1)
         target.write_bytes(unknown)
         shortcut = self.shortcut.read_bytes()
         result = self.install()
@@ -135,9 +137,9 @@ shutil.copyfile(source,args[args.index('-o')+1])
     def test_payload_requires_one_matching_version_before_installation(self):
         payload = (PROJECT/'xray-manager.sh').read_bytes()
         source = self.base/'candidate.sh'
-        for replacement in [b'\nVERSION=0.99.0\n', b'\n', b'\nVERSION=0.1.32\nVERSION=0.1.32\n']:
+        for replacement in [b'\nVERSION=0.99.0\n', b'\n', b'\nVERSION=0.1.33\nVERSION=0.1.33\n']:
             with self.subTest(replacement=replacement):
-                source.write_bytes(payload.replace(b'\nVERSION=0.1.32\n', replacement, 1))
+                source.write_bytes(payload.replace(b'\nVERSION=0.1.33\n', replacement, 1))
                 result = self.shell('install_payload "$2" "$3" "$4"', source, self.lib, self.shortcut)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(self.lib.exists())
@@ -168,9 +170,17 @@ shutil.copyfile(source,args[args.index('-o')+1])
         for line in (folder/'SHA256SUMS').read_text().splitlines():
             digest,name=line.split()
             self.assertEqual(hashlib.sha256((folder/name).read_bytes()).hexdigest(),digest)
-        with tarfile.open(folder/'SKYBYTE-Xray-Manager-v0.1.32.tar.gz') as archive:
+        with tarfile.open(folder/'SKYBYTE-Xray-Manager-v0.1.33.tar.gz') as archive:
             names={item.name for item in archive}
-        prefix='skybyte-xray-manager-v0.1.32/'
+        prefix='skybyte-xray-manager-v0.1.33/'
+        with tempfile.TemporaryDirectory() as directory:
+            with tarfile.open(folder/'SKYBYTE-Xray-Manager-v0.1.33.tar.gz') as archive:
+                # This archive was just produced from the allowlisted local source.
+                archive.extractall(directory)
+            extracted=Path(directory)/prefix
+            result=subprocess.run([sys.executable,str(extracted/'scripts/build.py'),'--check'],
+                                  cwd=extracted,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn(prefix+'LICENSE',names)
         self.assertIn(prefix+'tests/test_installer.py',names)
         self.assertIn(prefix+'docs/REVIEW.md',names)
