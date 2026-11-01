@@ -7,7 +7,26 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-shell = (ROOT / 'src/manager.sh').read_text()
+def assemble(name, chain=()):
+    """Expand repository-local source includes; never load modules on the VPS."""
+    relative = Path(name) if '/' in name else Path('src') / name
+    if (relative.is_absolute() or '..' in relative.parts or
+            relative.parts[0] not in ('src', 'lib', 'modules') or
+            len(relative.parts) != 2 or
+            not re.fullmatch(r'[a-z0-9_]+[.](?:sh|py)', relative.name)):
+        raise ValueError('Invalid source include: ' + name)
+    key = relative.as_posix()
+    if key in chain:
+        raise ValueError('Recursive source include: ' + key)
+    path = ROOT / relative
+    if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+        raise ValueError('Missing or symlinked source include: ' + key)
+    source = path.read_text()
+    return re.sub(r'^# @include ([^\n]+)\n',
+                  lambda match: assemble(match[1], chain + (key,)), source, flags=re.M)
+
+
+shell = assemble('manager.sh')
 assert shell.count('# BUILD_PREFLIGHT') == 1
 preflight = (ROOT / 'src/preflight.py').read_text()
 compile(preflight, 'src/preflight.py', 'exec')
@@ -22,7 +41,7 @@ compile(media, 'src/media.py', 'exec')
 shell = shell.replace('# BUILD_MEDIA', media.split("\nif __name__=='__main__':", 1)[0])
 ipv6 = (ROOT / 'src/ipv6.py').read_text()
 compile(ipv6, 'src/ipv6.py', 'exec')
-shell = shell.replace('# BUILD_IPV6', (ROOT / 'src/ipv6.sh').read_text().replace('# BUILD_IPV6_PY', ipv6))
+shell = shell.replace('# BUILD_IPV6', assemble('modules/ipv6.sh').replace('# BUILD_IPV6_PY', ipv6))
 python = (ROOT / 'src/core.py').read_text()
 compile(python, 'src/core.py', 'exec')
 helper = "helper(){ python3 - \"$@\" <<'SKYBYTE_PYTHON'\n" + python + "\nSKYBYTE_PYTHON\n}\n"

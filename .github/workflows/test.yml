@@ -30,9 +30,9 @@ jobs:
           bash -n bootstrap.sh
           bash -n src/quickstart.sh
           bash -n src/bootstrap.sh
-          bash -n src/manager.sh
+          for file in src/*.sh lib/*.sh modules/*.sh tests/*.sh; do bash -n "$file"; done
           bash -n xray-manager.sh
-          shellcheck install.sh bootstrap.sh src/quickstart.sh src/bootstrap.sh src/manager.sh xray-manager.sh
+          shellcheck install.sh bootstrap.sh src/quickstart.sh src/bootstrap.sh xray-manager.sh tests/*.sh
           bash xray-manager.sh --self-check
       - name: Verified official engine and real proxy tests
         env:

@@ -28,9 +28,9 @@
 
 ---
 
-独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.30**，默认核心 **v26.10.29**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
+独立的 Bash VPS 管理工具，使用官方 Xray-core，支持 Ubuntu/Debian、中文和英文界面。版本 **0.1.31**，默认核心 **v26.10.31**。本项目与 SKYBYTE Manager 的 sing-box 配置、二进制和服务使用不同路径，可在端口不冲突时共存。
 
-v0.1.30 新增 a → 5 独立搭建 IPv6 节点；端口编辑 e → 5 保留。官方核心保持 v26.10.29。
+v0.1.31 将 Bash 操作拆分到 lib/ 与 modules/，保留独立安装包和现有菜单；新增端口、重复安装及卸载测试入口。默认官方核心 v26.10.31。
 
 ## 修改节点端口
 
@@ -52,7 +52,7 @@ VPS 与客户端均需 IPv6，云安全组也需放行 IPv6 TCP 端口。本地�
 
 排除 WARP/WireGuard、TUN 等隧道网卡，不能把代理出口作为入站地址。需要 VPS 原生公网 IPv6 与路由，以及支持 IPv6 的客户端网络。检测不修改默认路由、不关闭防火墙；活动 UFW 必须管理 IPv6，仍需放行服务商防火墙的实际 IPv6 TCP 端口。公网可达性需从客户端测试，IPv6 也可能受限。节点参数与链接保存在 VPS，请安装防火墙并做好保密。
 
-本版默认官方核心为 [v26.10.29](https://github.com/XTLS/Xray-core/releases/tag/v26.10.29)。更新管理脚本用 **m**；已有 VPS 核心不会随脚本更新被静默替换，请用 **f** 更新核心，回车选择 v26.10.29。保留官方新版 Freedom 私网/保留地址默认保护，正式配置不添加私网放行例外。
+本版默认官方核心为 [v26.10.31](https://github.com/XTLS/Xray-core/releases/tag/v26.10.31)。更新管理脚本用 **m**；已有 VPS 核心不会随脚本更新被静默替换，请用 **f** 更新核心，回车选择 v26.10.31。保留官方新版 Freedom 私网/保留地址默认保护，正式配置不添加私网放行例外。
 
 ## 启动概览
 
@@ -181,7 +181,7 @@ bash install.sh
 
 ## 更新管理脚本
 
-菜单 **m** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 `y` 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.30 安装命令更新一次，之后即可使用菜单 m。
+菜单 **m** 检查本项目最新正式 GitHub Release，显示当前版本与可更新版本，输入 `y` 后更新已安装的 `/usr/local/lib/skybyte-xray/manager.sh`。不安装预览版，不更新到相同或更旧版本；如果从旧副本启动，也拒绝覆盖更高版本的已安装脚本。v0.1.3 及更早版本需要先运行 v0.1.31 安装命令更新一次，之后即可使用菜单 m。
 
 下载固定仓库、指定版本的主脚本与 `SHA256SUMS`，核对 GitHub 发布附件的 SHA256 及清单，并检查 Bash 语法、版本和自检结果。通过后在同一目录原子替换，旧脚本保留为 `manager.previous.sh`；替换后自检失败时回退，若回退无法写入则明确报错并保留备份。拒绝未托管目录、异常文件或符号链接。网络/API 限额、附件缺失、校验错误和写入权限不足会停止更新；不会改写节点配置、UUID、密钥、语言、Xray 核心、服务、防火墙或 BBR 参数。
 
@@ -255,15 +255,15 @@ Xray v26.3.27 与 v26.10.10 客户端/服务端在隔离环境的四种连接组
 
 ## 开发与测试
 
-主源码：`src/manager.sh`（Bash 操作和界面）、`src/core.py`（配置、校验、下载和恢复）。生成的 `xray-manager.sh` 自包含 Python helper，不依赖旁边的源码文件。
+源码入口 `src/manager.sh` 只维护配置和模块清单；`lib/` 管理公共交互、检测、防火墙、服务、订阅、备份及菜单，`modules/` 管理节点安装、Reality、WARP 和 IPv6；`src/core.py` 保留配置、下载、事务及流量检测后端。构建后的 `xray-manager.sh` 自包含全部模块，VPS 无需逐个下载模块。详见[模块开发说明](docs/MODULES.md)。
 
 ```bash
 python3 scripts/build.py
 python3 scripts/build.py --check
 bash -n install.sh
-bash -n src/manager.sh
+for file in src/*.sh lib/*.sh modules/*.sh tests/*.sh; do bash -n "$file"; done
 bash -n xray-manager.sh
-shellcheck install.sh src/manager.sh xray-manager.sh
+shellcheck install.sh bootstrap.sh src/quickstart.sh src/bootstrap.sh xray-manager.sh tests/*.sh
 bash xray-manager.sh --self-check
 XRAY_BIN=/absolute/path/to/verified/xray python3 -m unittest discover -s tests -v
 ```
